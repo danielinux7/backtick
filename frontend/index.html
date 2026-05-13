@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chart Replay</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/themes/dark.css" />
+  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand">Chart Replay</div>
+    <form id="setup-form" class="setup">
+      <input name="symbol" placeholder="SOLUSDT" value="SOLUSDT" required />
+      <select name="market">
+        <option value="spot">spot</option>
+        <option value="futures">futures</option>
+      </select>
+      <select name="tf" id="tf-select"></select>
+      <input name="replay_date" id="replay-date" placeholder="dd/mm/yyyy" required style="width:120px" />
+      <input name="warmup" type="number" value="100" min="10" max="2000" title="warmup candles shown before the replay date" style="width:80px" />
+      <button type="submit">Load</button>
+    </form>
+    <div id="status"></div>
+  </header>
+
+  <main>
+    <section class="chart-pane">
+      <div class="chart-toolbar">
+        <button type="button" class="tool" data-tool="hline" title="Horizontal line — click chart to place">&#8213; H-line</button>
+        <button type="button" class="tool" data-tool="measure" title="Measure — click start then end">&#9881; Measure</button>
+        <button type="button" id="clear-drawings" title="Clear all H-lines and measurements">Clear</button>
+        <span id="measure-summary"></span>
+      </div>
+      <div class="chart-stack">
+        <div id="chart"></div>
+        <div id="rsi-chart"></div>
+        <div id="arm-hint" class="arm-hint" style="display:none"></div>
+      </div>
+      <div class="controls">
+        <button id="back-1" disabled>&laquo;</button>
+        <button id="play" disabled>Play</button>
+        <button id="next-1" disabled>Next</button>
+        <label>Step <input type="number" id="step-n" value="1" min="1" max="500" /></label>
+        <label>Speed <select id="speed">
+          <option value="1000">1x (1s)</option>
+          <option value="500">2x</option>
+          <option value="250">4x</option>
+          <option value="100">10x</option>
+          <option value="50">20x</option>
+        </select></label>
+        <span id="cursor-info"></span>
+      </div>
+
+      <div class="indicators">
+        <strong>Indicators:</strong>
+        <label><input type="checkbox" class="ind" data-kind="ema" data-period="20" /> EMA 20</label>
+        <label><input type="checkbox" class="ind" data-kind="ema" data-period="50" /> EMA 50</label>
+        <label><input type="checkbox" class="ind" data-kind="ema" data-period="200" /> EMA 200</label>
+        <label><input type="checkbox" class="ind" data-kind="rsi" data-period="14" /> RSI 14</label>
+      </div>
+    </section>
+
+    <aside class="side-pane">
+      <div class="trade-panel">
+        <h3>Place trade</h3>
+        <div class="row">
+          <label>Type
+            <select id="t-type">
+              <option value="market" selected>Market</option>
+              <option value="limit">Limit</option>
+            </select>
+          </label>
+          <label id="limit-row" style="display:none">Price
+            <input type="number" id="t-limit" step="any" placeholder="limit price" />
+          </label>
+          <button type="button" class="pick" data-pick="limit" id="pick-limit" style="display:none" title="set from chart">&#127919;</button>
+        </div>
+        <div class="row">
+          <label>Qty <input type="number" id="t-qty" value="1" step="any" min="0" /></label>
+        </div>
+        <div class="row sltp-row">
+          <label class="toggle-label" for="use-sl"><input type="checkbox" id="use-sl" /> SL %</label>
+          <input type="number" id="t-sl-pct" step="0.01" placeholder="off" disabled />
+          <button type="button" class="pick" data-pick="sl" title="set SL from chart">&#127919;</button>
+        </div>
+        <div class="row sltp-row">
+          <label class="toggle-label" for="use-tp"><input type="checkbox" id="use-tp" /> TP %</label>
+          <input type="number" id="t-tp-pct" step="0.01" placeholder="off" disabled />
+          <button type="button" class="pick" data-pick="tp" title="set TP from chart">&#127919;</button>
+        </div>
+        <div class="row">
+          <label>Side for picks
+            <select id="pick-side">
+              <option value="long">Long</option>
+              <option value="short">Short</option>
+            </select>
+          </label>
+        </div>
+        <div class="row buttons">
+          <button id="long-btn" class="long" disabled>Long</button>
+          <button id="short-btn" class="short" disabled>Short</button>
+        </div>
+        <div class="row">
+          <span id="mark-info"></span>
+        </div>
+      </div>
+
+      <div class="trades-panel">
+        <h3>Trades</h3>
+        <div class="totals" id="totals"></div>
+        <table id="trades-table">
+          <thead><tr>
+            <th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th></th>
+          </tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </aside>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,106 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; background: #131722; color: #d1d4dc; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
+
+header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #0f1218; border-bottom: 1px solid #1e222d; flex-wrap: wrap; }
+.brand { font-weight: 700; letter-spacing: 0.5px; }
+.setup { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.setup input, .setup select, .setup button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 8px; }
+.setup button { cursor: pointer; background: #2962ff; border-color: #2962ff; }
+.setup button:hover { background: #1d4ed8; }
+#status { font-size: 12px; color: #f7a; }
+
+main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
+
+.chart-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.chart-toolbar { display: flex; gap: 6px; padding: 4px 8px; background: #0f1218; border-bottom: 1px solid #1e222d; align-items: center; flex-shrink: 0; font-size: 12px; }
+.chart-toolbar button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+.chart-toolbar button:hover:not(:disabled) { background: #2a2e39; }
+.chart-toolbar button.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
+#measure-summary { margin-left: auto; color: #ddd; font-family: monospace; font-size: 12px; }
+#measure-summary b { color: #ffb74d; }
+
+.chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+#chart { flex: 1; min-height: 0; }
+#chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
+#rsi-chart { height: 0; transition: height 0.2s; }
+#rsi-chart.visible { height: 160px; border-top: 1px solid #1e222d; }
+
+.controls { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; flex-wrap: wrap; flex-shrink: 0; }
+.controls button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.controls button:hover:not(:disabled) { background: #2a2e39; }
+.controls button:disabled { opacity: 0.4; cursor: not-allowed; }
+.controls input, .controls select { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 2px 6px; }
+#cursor-info { margin-left: auto; font-size: 12px; color: #999; }
+
+.indicators { padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; font-size: 12px; display: flex; gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
+.indicators label { cursor: pointer; }
+
+.side-pane { display: flex; flex-direction: column; border-left: 1px solid #1e222d; background: #0f1218; overflow: hidden; }
+.trade-panel, .trades-panel { padding: 10px; border-bottom: 1px solid #1e222d; }
+.trade-panel h3, .trades-panel h3 { margin: 0 0 8px 0; font-size: 13px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
+.row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; position: relative; }
+.row label { font-size: 12px; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; position: relative; }
+.row label.toggle-label { gap: 6px; flex: 0 0 70px; cursor: pointer; white-space: nowrap; }
+.row label.toggle-label input[type=checkbox] { width: auto; flex: none; margin: 0; }
+.row.sltp-row > input[type=number] { flex: 1 1 auto; min-width: 0; width: auto; }
+.row input, .row select { width: 100%; background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 6px; }
+.row input:disabled { opacity: 0.4; }
+.row input.bad, .row select.bad { border-color: #ef5350; }
+.row.buttons button { flex: 1; padding: 8px; border: none; border-radius: 4px; color: white; font-weight: 600; cursor: pointer; }
+.row.buttons button:disabled { opacity: 0.4; cursor: not-allowed; }
+.long { background: #26a69a; }
+.short { background: #ef5350; }
+
+.pick { background: #2a2e39; border: 1px solid #444; color: #ffb74d; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; line-height: 1; flex-shrink: 0; }
+.pick:hover { background: #3a3e49; }
+.pick.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
+
+.trades-panel { flex: 1; overflow: auto; }
+#trades-table { width: 100%; font-size: 11px; border-collapse: collapse; }
+#trades-table th { text-align: left; padding: 4px; color: #777; border-bottom: 1px solid #1e222d; }
+#trades-table td { padding: 4px; border-bottom: 1px solid #181b24; }
+#trades-table .pnl-pos { color: #26a69a; }
+#trades-table .pnl-neg { color: #ef5350; }
+#trades-table .closed { opacity: 0.55; }
+#trades-table button { background: #2a2e39; color: #d1d4dc; border: none; border-radius: 3px; padding: 2px 6px; cursor: pointer; font-size: 10px; }
+.totals { font-size: 12px; padding: 4px 0; color: #d1d4dc; }
+.totals span { margin-right: 12px; }
+#mark-info { font-size: 12px; color: #999; }
+
+.field-error {
+  position: absolute;
+  top: 100%; left: 0;
+  margin-top: 4px;
+  background: #2b1416; color: #ffb4ab;
+  border: 1px solid #ef5350;
+  padding: 4px 8px; border-radius: 4px;
+  font-size: 11px; white-space: nowrap;
+  z-index: 100; box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  animation: fade-in 0.15s ease-out;
+  pointer-events: none;
+}
+.field-error::before {
+  content: "";
+  position: absolute; top: -5px; left: 10px;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid #ef5350;
+}
+@keyframes fade-in { from { opacity: 0; transform: translateY(-2px); } to { opacity: 1; } }
+
+.arm-hint {
+  position: absolute;
+  top: 8px; left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 183, 77, 0.95);
+  color: #1e222d;
+  padding: 4px 10px; border-radius: 4px;
+  font-size: 12px; font-weight: 600;
+  z-index: 50; pointer-events: none;
+}
+
+/* flatpickr dark fixes for our colors */
+.flatpickr-calendar { background: #1e222d; color: #d1d4dc; border-color: #2a2e39; }
+.flatpickr-day { color: #d1d4dc; }
+.flatpickr-day.today { border-color: #2962ff; }
+.flatpickr-day.selected, .flatpickr-day.startRange, .flatpickr-day.endRange { background: #2962ff; border-color: #2962ff; }
