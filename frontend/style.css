@@ -16,6 +16,19 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .chart-toolbar button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
 .chart-toolbar button:hover:not(:disabled) { background: #2a2e39; }
 .chart-toolbar button.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
+.chart-toolbar input[type=color] { width: 24px; height: 22px; padding: 0; border: 1px solid #2a2e39; border-radius: 4px; background: #1e222d; cursor: pointer; }
+.chart-toolbar input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
+.chart-toolbar input[type=color]::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+.hlines-strip { display: flex; gap: 4px; padding: 4px 8px; background: #0f1218; border-bottom: 1px solid #1e222d; flex-wrap: wrap; font-size: 11px; }
+.hlines-strip:empty { display: none; }
+.hline-chip { display: inline-flex; align-items: center; gap: 4px; background: #1e222d; border: 1px solid #2a2e39; border-radius: 4px; padding: 1px 4px 1px 2px; font-family: monospace; }
+.hline-chip input[type=color] { width: 18px; height: 16px; padding: 0; border: none; background: transparent; cursor: pointer; }
+.hline-chip input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+.hline-chip input[type=color]::-webkit-color-swatch { border: none; border-radius: 2px; }
+.hline-chip .px { color: #d1d4dc; }
+.hline-chip button { background: transparent; color: #888; border: none; cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
+.hline-chip button:hover { color: #ef5350; }
 #measure-summary { margin-left: auto; color: #ddd; font-family: monospace; font-size: 12px; }
 #measure-summary b { color: #ffb74d; }
 

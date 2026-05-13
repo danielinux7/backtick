@@ -185,7 +185,8 @@
   let armedFor = null;          // "limit" | "sl" | "tp" | "hline" | "measure" | null
 
   // drawings
-  const hlinePriceLines = new Set();   // priceLine refs on candleSeries
+  const hlines = [];                   // [{ id, line, price, color }]
+  let hlineCounter = 0;
   let measureFirst = null;             // { time, price }
   let measureSeries = null;            // line series for measure
 
@@ -537,15 +538,55 @@
   };
 
   const addHline = (price) => {
+    const color = $("#hline-color").value || "#90caf9";
+    const id = `hl_${++hlineCounter}`;
     const line = candleSeries.createPriceLine({
-      price, color: "#90caf9", lineStyle: 0, lineWidth: 1,
+      price, color, lineStyle: 0, lineWidth: 1,
       axisLabelVisible: true, title: `H ${price.toFixed(getPrecision(price))}`,
     });
-    hlinePriceLines.add(line);
+    hlines.push({ id, line, price, color });
+    renderHlines();
+  };
+  const removeHline = (id) => {
+    const idx = hlines.findIndex((h) => h.id === id);
+    if (idx < 0) return;
+    candleSeries.removePriceLine(hlines[idx].line);
+    hlines.splice(idx, 1);
+    renderHlines();
+  };
+  const updateHlineColor = (id, color) => {
+    const h = hlines.find((x) => x.id === id);
+    if (!h) return;
+    h.color = color;
+    h.line.applyOptions({ color });
+  };
+  const renderHlines = () => {
+    const strip = $("#hlines-strip");
+    strip.innerHTML = "";
+    for (const h of hlines) {
+      const chip = document.createElement("span");
+      chip.className = "hline-chip";
+      const colorInput = document.createElement("input");
+      colorInput.type = "color";
+      colorInput.value = h.color;
+      colorInput.title = "line color";
+      colorInput.addEventListener("input", (e) => updateHlineColor(h.id, e.target.value));
+      const label = document.createElement("span");
+      label.className = "px";
+      label.textContent = h.price.toFixed(getPrecision(h.price));
+      const del = document.createElement("button");
+      del.type = "button";
+      del.textContent = "×";
+      del.title = "remove";
+      del.addEventListener("click", () => removeHline(h.id));
+      chip.append(colorInput, label, del);
+      strip.appendChild(chip);
+    }
   };
   const clearHlines = () => {
-    for (const line of hlinePriceLines) candleSeries.removePriceLine(line);
-    hlinePriceLines.clear();
+    for (const h of hlines) candleSeries.removePriceLine(h.line);
+    hlines.length = 0;
+    renderHlines();
   };
   const clearMeasure = () => {
     if (measureSeries) { chart.removeSeries(measureSeries); measureSeries = null; }

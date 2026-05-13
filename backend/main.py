@@ -4,7 +4,7 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -17,6 +17,15 @@ FRONTEND = ROOT / "frontend"
 
 app = FastAPI(title="Chart Replay")
 store = SessionStore()
+
+
+@app.middleware("http")
+async def no_cache(request: Request, call_next):
+    """Prevent the browser from serving stale frontend assets during dev."""
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static"):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
 
 
 class CreateSessionReq(BaseModel):

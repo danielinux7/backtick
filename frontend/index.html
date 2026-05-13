@@ -30,10 +30,12 @@
     <section class="chart-pane">
       <div class="chart-toolbar">
         <button type="button" class="tool" data-tool="hline" title="Horizontal line — click chart to place">&#8213; H-line</button>
+        <input type="color" id="hline-color" value="#90caf9" title="H-line color" />
         <button type="button" class="tool" data-tool="measure" title="Measure — click start then end">&#9881; Measure</button>
         <button type="button" id="clear-drawings" title="Clear all H-lines and measurements">Clear</button>
         <span id="measure-summary"></span>
       </div>
+      <div id="hlines-strip" class="hlines-strip"></div>
       <div class="chart-stack">
         <div id="chart"></div>
         <div id="rsi-chart"></div>
