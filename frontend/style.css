@@ -35,8 +35,12 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 #chart { flex: 1; min-height: 0; }
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
-#rsi-chart { height: 0; transition: height 0.2s; }
+/* sub-pane visibility — no height transition so the chart's autoSize doesn't
+   redraw at every interpolated height (was causing initial flicker) */
+#rsi-chart { height: 0; }
 #rsi-chart.visible { height: 160px; border-top: 1px solid #1e222d; }
+#cvd-chart { height: 0; }
+#cvd-chart.visible { height: 140px; border-top: 1px solid #1e222d; }
 
 .controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; flex-shrink: 0; }
 .controls-left { display: flex; gap: 8px; align-items: center; justify-self: start; }

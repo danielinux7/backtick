@@ -257,6 +257,75 @@ def close_trade(sid: str, tid: str) -> dict:
     return _serialize_session(sess)
 
 
+@app.get("/api/session/{sid}/cvd")
+def cvd(sid: str) -> dict:
+    """Per-candle OHLC of cumulative volume delta — taker buy minus taker sell,
+    with intra-candle min/max so the chart can render proper candlesticks.
+    Heavy on first call for a session (pulls aggTrades for the revealed range);
+    subsequent calls reuse the per-candle cache."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    with sess.lock:
+        end_idx = sess.cursor
+        if end_idx < 0:
+            return {"points": []}
+        tf_ms = TF_MS[sess.tf]
+        candle_times = [int(sess.df["time"].iloc[i]) for i in range(end_idx + 1)]
+        missing = [t for t in candle_times if t not in sess.cvd_cache]
+        if missing:
+            start_ms = min(missing) * 1000
+            end_ms = max(missing) * 1000 + tf_ms
+            try:
+                df = fetch_agg_trades(sess.symbol, start_ms, end_ms, sess.market)
+            except Exception as e:
+                raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
+            if df.empty:
+                for t in missing:
+                    sess.cvd_cache[t] = {"delta": 0.0, "max_rel": 0.0, "min_rel": 0.0}
+            else:
+                df = df.sort_values("time_ms").reset_index(drop=True)
+                signed = df["qty"].where(~df["is_buyer_maker"], -df["qty"]).astype("float64")
+                base_ms = min(missing) * 1000
+                bins = ((df["time_ms"].astype("int64") - base_ms) // tf_ms).astype("int64")
+                # group + compute candle-local cumulative OHLC stats
+                grouped = signed.groupby(bins)
+                stats = grouped.agg([
+                    ("delta", "sum"),
+                    ("max_rel", lambda s: float(s.cumsum().max())),
+                    ("min_rel", lambda s: float(s.cumsum().min())),
+                ])
+                for t in missing:
+                    bin_idx = (t * 1000 - base_ms) // tf_ms
+                    if bin_idx in stats.index:
+                        row = stats.loc[bin_idx]
+                        sess.cvd_cache[t] = {
+                            "delta": float(row["delta"]),
+                            "max_rel": float(row["max_rel"]),
+                            "min_rel": float(row["min_rel"]),
+                        }
+                    else:
+                        sess.cvd_cache[t] = {"delta": 0.0, "max_rel": 0.0, "min_rel": 0.0}
+        cum = 0.0
+        points = []
+        for t in candle_times:
+            info = sess.cvd_cache.get(t) or {"delta": 0.0, "max_rel": 0.0, "min_rel": 0.0}
+            open_v = cum
+            close_v = cum + info["delta"]
+            high_v = cum + info["max_rel"]
+            low_v = cum + info["min_rel"]
+            cum = close_v
+            points.append({
+                "time": t,
+                "open": open_v,
+                "high": high_v,
+                "low": low_v,
+                "close": close_v,
+            })
+    return {"points": points}
+
+
 @app.get("/api/session/{sid}/recent_trades")
 def recent_trades(sid: str, n: int = 60) -> dict:
     """Return the most recent N aggTrades up to (and including) the candle

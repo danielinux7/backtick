@@ -78,6 +78,11 @@ class Session:
     # many of those trades have already been revealed.
     tick_aggs: pd.DataFrame | None = None
     tick_idx: int = 0
+    # per-candle CVD stats; each value is
+    #   {"delta": net signed qty, "max_rel": peak intra-candle cum, "min_rel": trough}
+    # — recorded relative to the start of the candle so we can stitch a running
+    # cumulative OHLC line at request time without re-walking aggTrades
+    cvd_cache: dict[int, dict] = field(default_factory=dict)
 
     def candles_so_far(self) -> list[dict]:
         sub = self.df.iloc[: self.cursor + 1]

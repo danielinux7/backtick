@@ -37,6 +37,7 @@
   // ---- Chart setup
   const chartEl = $("#chart");
   const rsiEl = $("#rsi-chart");
+  const cvdEl = $("#cvd-chart");
 
   const chart = LightweightCharts.createChart(chartEl, {
     autoSize: true,
@@ -74,15 +75,35 @@
     handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
   });
   const rsiSeries = rsiChart.addSeries(LightweightCharts.LineSeries, { color: "#bb86fc", lineWidth: 1 });
+
+  const cvdChart = LightweightCharts.createChart(cvdEl, {
+    autoSize: true,
+    layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
+    grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
+    timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#2a2e39", visible: false },
+    rightPriceScale: { borderColor: "#2a2e39" },
+    handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: true },
+    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+  });
+  const cvdSeries = cvdChart.addSeries(LightweightCharts.CandlestickSeries, {
+    upColor: "#26a69a", downColor: "#ef5350",
+    borderUpColor: "#26a69a", borderDownColor: "#ef5350",
+    wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+    priceLineVisible: false,
+  });
+
   let _syncing = false;
   chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
     if (!r || _syncing) return;
     _syncing = true;
     try { rsiChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
+    try { cvdChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
     _syncing = false;
   });
   const showRsi = (visible) => rsiEl.classList.toggle("visible", visible);
+  const showCvd = (visible) => cvdEl.classList.toggle("visible", visible);
   showRsi(false);
+  showCvd(false);
 
   // ---- Ctrl+Wheel zoom with locked price/bar ratio (TradingView-style)
   // Plain wheel is a no-op; Ctrl/Cmd+Wheel zooms time and price together,
@@ -213,6 +234,10 @@
       rsiSeries.setData([]);
       showRsi(false);
     }
+    const wantCvd = !!document.querySelector('.ind[data-kind="cvd"]:checked');
+    if (wantCvd) { showCvd(true); fetchCvd(); }
+    else { showCvd(false); cvdSeries.setData([]); cvdLastCursor = null; }
+
     const wantVolume = !!document.querySelector('.ind[data-kind="volume"]:checked');
     volumeSeries.applyOptions({ visible: wantVolume });
     if (wantVolume) {
@@ -462,6 +487,25 @@
     }
   };
 
+  // ---- CVD (cumulative volume delta) sub-pane
+  let cvdAbort = null;
+  let cvdLastCursor = null;
+  const fetchCvd = async () => {
+    if (!session) return;
+    if (cvdLastCursor === session.cursor) return;
+    cvdLastCursor = session.cursor;
+    if (cvdAbort) cvdAbort.abort();
+    cvdAbort = new AbortController();
+    try {
+      const data = await api(`/api/session/${session.id}/cvd`, { signal: cvdAbort.signal });
+      cvdSeries.setData((data.points || []).map((p) => ({
+        time: p.time, open: p.open, high: p.high, low: p.low, close: p.close,
+      })));
+    } catch (err) {
+      if (err.name !== "AbortError") setStatus(`cvd: ${err.message}`, true);
+    }
+  };
+
   // ---- Time & Sales
   // Two modes:
   //   - candle mode: each session update re-pulls last N prints from the cursor candle
@@ -698,6 +742,7 @@
     for (const p of tradeZones.values()) candleSeries.detachPrimitive(p);
     tradeZones.clear();
     setVolumeProfileVisible(false);
+    cvdSeries.setData([]); showCvd(false); cvdLastCursor = null;
     tapeLastCursorTime = null;
     tapeBuffer = [];
     resetTickReplay();
