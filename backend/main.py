@@ -9,7 +9,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .binance import VALID_TFS
+from .aggtrades import fetch_agg_trades
+from .binance import TF_MS, VALID_TFS
 from .replay import SessionStore, Trade
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -224,6 +225,40 @@ def close_trade(sid: str, tid: str) -> dict:
         else:
             raise HTTPException(404, "trade not found or already closed")
     return _serialize_session(sess)
+
+
+@app.get("/api/session/{sid}/recent_trades")
+def recent_trades(sid: str, n: int = 60) -> dict:
+    """Return the most recent N aggTrades up to (and including) the candle
+    currently revealed by the cursor. Used by the Time & Sales panel."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    n = max(1, min(n, 500))
+    tf_ms = TF_MS[sess.tf]
+    end_ms = sess.current_time() * 1000 + tf_ms                 # end of cursor candle
+    # widen the lookback window if the symbol is illiquid — try up to ~10 candles
+    for window_candles in (1, 3, 10):
+        start_ms = end_ms - tf_ms * window_candles
+        try:
+            df = fetch_agg_trades(sess.symbol, start_ms, end_ms, sess.market)
+        except Exception as e:
+            raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
+        if len(df) >= n or window_candles == 10:
+            break
+    df = df.tail(n)
+    return {
+        "trades": [
+            {
+                "time_ms": int(r.time_ms),
+                "price": float(r.price),
+                "qty": float(r.qty),
+                "side": "sell" if r.is_buyer_maker else "buy",
+            }
+            for r in df.itertuples(index=False)
+        ],
+    }
 
 
 @app.delete("/api/session/{sid}")

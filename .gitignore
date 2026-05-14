@@ -1,5 +1,5 @@
 __pycache__/
 *.pyc
-data_cache/*.parquet
-data_cache/*.csv
+data_cache/**/*.parquet
+data_cache/**/*.csv
 .venv/

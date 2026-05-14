@@ -72,6 +72,19 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .pick:hover { background: #3a3e49; }
 .pick.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
 
+.tape-panel { padding: 10px; border-bottom: 1px solid #1e222d; display: flex; flex-direction: column; max-height: 240px; }
+.tape-panel h3 { margin: 0 0 6px 0; font-size: 13px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
+.tape-status { font-size: 11px; color: #777; margin-bottom: 4px; min-height: 14px; }
+.tape-list { flex: 1; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.5; }
+.tape-row { display: grid; grid-template-columns: 60px 1fr 1fr; gap: 6px; padding: 1px 4px; border-radius: 2px; }
+.tape-row.buy  { background: rgba(38, 166, 154, 0.10); color: #4dd0c1; }
+.tape-row.sell { background: rgba(239, 83, 80, 0.10); color: #ff7d75; }
+.tape-row .t { color: #777; }
+.tape-row .q { text-align: right; }
+.tape-row.large { font-weight: 700; }
+.tape-row.large.buy  { background: rgba(38, 166, 154, 0.28); }
+.tape-row.large.sell { background: rgba(239, 83, 80, 0.28); }
+
 .trades-panel { flex: 1; overflow: auto; }
 #trades-table { width: 100%; font-size: 13px; border-collapse: collapse; }
 #trades-table th { text-align: left; padding: 6px 4px; color: #aaa; border-bottom: 1px solid #2a2e39; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }

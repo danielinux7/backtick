@@ -68,6 +68,8 @@
         <label><input type="checkbox" class="ind" data-kind="ema" data-period="50" /> EMA 50</label>
         <label><input type="checkbox" class="ind" data-kind="ema" data-period="200" /> EMA 200</label>
         <label><input type="checkbox" class="ind" data-kind="rsi" data-period="14" /> RSI 14</label>
+        <label><input type="checkbox" class="ind" data-kind="volume" /> Volume</label>
+        <label><input type="checkbox" class="ind" data-kind="volprofile" /> Vol Profile</label>
       </div>
     </section>
 
@@ -114,6 +116,12 @@
         <div class="row">
           <span id="mark-info"></span>
         </div>
+      </div>
+
+      <div class="tape-panel">
+        <h3>Time &amp; Sales</h3>
+        <div id="tape-status" class="tape-status"></div>
+        <div id="tape-list" class="tape-list"></div>
       </div>
 
       <div class="trades-panel">

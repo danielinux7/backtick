@@ -56,6 +56,14 @@
   });
   const candleMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
 
+  // volume — bottom overlay on its own price scale; auto-scales independently
+  const volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
+    priceFormat: { type: "volume" },
+    priceScaleId: "volume",
+    visible: false,
+  });
+  volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+
   const rsiChart = LightweightCharts.createChart(rsiEl, {
     autoSize: true,
     layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
@@ -205,6 +213,19 @@
       rsiSeries.setData([]);
       showRsi(false);
     }
+    const wantVolume = !!document.querySelector('.ind[data-kind="volume"]:checked');
+    volumeSeries.applyOptions({ visible: wantVolume });
+    if (wantVolume) {
+      volumeSeries.setData(session.candles.map((c) => ({
+        time: c.time,
+        value: c.volume,
+        color: c.close >= c.open ? "rgba(38, 166, 154, 0.55)" : "rgba(239, 83, 80, 0.55)",
+      })));
+    } else {
+      volumeSeries.setData([]);
+    }
+    const wantVolProfile = !!document.querySelector('.ind[data-kind="volprofile"]:checked');
+    setVolumeProfileVisible(wantVolProfile);
   };
 
   // ---- Date helpers
@@ -271,6 +292,222 @@
     return r.json();
   };
 
+  // ---- Volume profile (horizontal histogram of volume-by-price for the
+  // visible time window; POC highlighted in orange). Implemented as a
+  // primitive so it re-renders automatically when you scroll/zoom.
+  const VOLPROF_BUCKETS = 40;
+  const VOLPROF_WIDTH_FRACTION = 0.18;
+  const VOLPROF_FILL = "rgba(120, 144, 156, 0.38)";
+  const VOLPROF_POC  = "rgba(255, 183, 77, 0.55)";
+
+  const makeVolumeProfile = () => {
+    let attached = null;
+    const renderer = {
+      draw(target) {
+        if (!attached || !session || !session.candles.length) return;
+        const ts = attached.chart.timeScale();
+        const range = ts.getVisibleLogicalRange();
+        if (!range) return;
+        const cs = session.candles;
+        const fromIdx = Math.max(0, Math.floor(range.from));
+        const toIdx = Math.min(cs.length - 1, Math.ceil(range.to));
+        if (toIdx < fromIdx) return;
+        let pMin = Infinity, pMax = -Infinity;
+        for (let i = fromIdx; i <= toIdx; i++) {
+          if (cs[i].low < pMin) pMin = cs[i].low;
+          if (cs[i].high > pMax) pMax = cs[i].high;
+        }
+        if (!isFinite(pMin) || !isFinite(pMax) || pMax <= pMin) return;
+        const bucketSize = (pMax - pMin) / VOLPROF_BUCKETS;
+        const buckets = new Array(VOLPROF_BUCKETS).fill(0);
+        for (let i = fromIdx; i <= toIdx; i++) {
+          const c = cs[i];
+          const span = c.high - c.low;
+          if (span <= 0) {
+            const b = Math.min(VOLPROF_BUCKETS - 1,
+              Math.max(0, Math.floor((c.close - pMin) / bucketSize)));
+            buckets[b] += c.volume;
+            continue;
+          }
+          // distribute the candle's volume evenly across the buckets it spans
+          const bStart = Math.max(0, Math.floor((c.low - pMin) / bucketSize));
+          const bEnd = Math.min(VOLPROF_BUCKETS - 1, Math.floor((c.high - pMin) / bucketSize));
+          const per = c.volume / (bEnd - bStart + 1);
+          for (let b = bStart; b <= bEnd; b++) buckets[b] += per;
+        }
+        let maxVol = 0, pocIdx = 0;
+        for (let i = 0; i < buckets.length; i++) {
+          if (buckets[i] > maxVol) { maxVol = buckets[i]; pocIdx = i; }
+        }
+        if (maxVol <= 0) return;
+
+        target.useBitmapCoordinateSpace((scope) => {
+          const ctx = scope.context;
+          const series = attached.series;
+          const hpr = scope.horizontalPixelRatio;
+          const vpr = scope.verticalPixelRatio;
+          const profileMax = scope.mediaSize.width * VOLPROF_WIDTH_FRACTION;
+          for (let i = 0; i < VOLPROF_BUCKETS; i++) {
+            if (buckets[i] <= 0) continue;
+            const yTop = series.priceToCoordinate(pMin + (i + 1) * bucketSize);
+            const yBot = series.priceToCoordinate(pMin + i * bucketSize);
+            if (yTop == null || yBot == null) continue;
+            const w = (buckets[i] / maxVol) * profileMax;
+            const xLeft = scope.mediaSize.width - w;
+            ctx.fillStyle = i === pocIdx ? VOLPROF_POC : VOLPROF_FILL;
+            ctx.fillRect(
+              xLeft * hpr,
+              Math.min(yTop, yBot) * vpr,
+              w * hpr,
+              Math.max(1, Math.abs(yTop - yBot)) * vpr,
+            );
+          }
+        });
+      },
+    };
+    return {
+      attached(params) { attached = params; },
+      detached() { attached = null; },
+      updateAllViews() {},
+      paneViews() {
+        return [{ zOrder: () => "normal", renderer: () => renderer }];
+      },
+    };
+  };
+
+  let volumeProfile = null;
+  const setVolumeProfileVisible = (visible) => {
+    if (visible && !volumeProfile) {
+      volumeProfile = makeVolumeProfile();
+      candleSeries.attachPrimitive(volumeProfile);
+    } else if (!visible && volumeProfile) {
+      candleSeries.detachPrimitive(volumeProfile);
+      volumeProfile = null;
+    }
+  };
+
+  // ---- Trade zone primitives (transparent green/red rectangles
+  // entry→TP and entry→SL, persisting after the trade closes)
+  const tradeZones = new Map();   // tradeId -> primitive
+  const ZONE_GREEN = "rgba(38, 166, 154, 0.14)";
+  const ZONE_RED   = "rgba(239,  83,  80, 0.14)";
+
+  const makeTradeZone = (tradeId) => {
+    let attached = null;
+    const renderer = {
+      draw(target) {
+        if (!attached || !session) return;
+        const t = session.trades.find((x) => x.id === tradeId);
+        if (!t || t.entry_time == null || t.entry_price == null) return;
+        target.useBitmapCoordinateSpace((scope) => {
+          const ctx = scope.context;
+          const ts = attached.chart.timeScale();
+          const series = attached.series;
+          const x1 = ts.timeToCoordinate(t.entry_time);
+          const rightTime = t.exit_time != null ? t.exit_time : session.current_time;
+          const x2 = ts.timeToCoordinate(rightTime);
+          if (x1 == null || x2 == null) return;
+          const yEntry = series.priceToCoordinate(t.entry_price);
+          if (yEntry == null) return;
+          const hpr = scope.horizontalPixelRatio;
+          const vpr = scope.verticalPixelRatio;
+          const left = Math.min(x1, x2) * hpr;
+          const width = Math.max(1, Math.abs(x2 - x1)) * hpr;
+          const drawBox = (yOther, color) => {
+            if (yOther == null) return;
+            ctx.fillStyle = color;
+            ctx.fillRect(
+              left,
+              Math.min(yEntry, yOther) * vpr,
+              width,
+              Math.abs(yOther - yEntry) * vpr,
+            );
+          };
+          if (t.tp != null) drawBox(series.priceToCoordinate(t.tp), ZONE_GREEN);
+          if (t.sl != null) drawBox(series.priceToCoordinate(t.sl), ZONE_RED);
+        });
+      },
+    };
+    return {
+      attached(params) { attached = params; },
+      detached() { attached = null; },
+      updateAllViews() {},
+      paneViews() {
+        return [{ zOrder: () => "bottom", renderer: () => renderer }];
+      },
+    };
+  };
+
+  const syncTradeZones = () => {
+    const wantIds = new Set();
+    if (session) {
+      for (const t of session.trades) {
+        if (t.entry_time != null) wantIds.add(t.id);
+      }
+    }
+    // remove zones whose trade is gone or hasn't filled yet
+    for (const [id, p] of tradeZones) {
+      if (!wantIds.has(id)) {
+        candleSeries.detachPrimitive(p);
+        tradeZones.delete(id);
+      }
+    }
+    // add zones for newly-filled trades
+    for (const id of wantIds) {
+      if (!tradeZones.has(id)) {
+        const p = makeTradeZone(id);
+        candleSeries.attachPrimitive(p);
+        tradeZones.set(id, p);
+      }
+    }
+  };
+
+  // ---- Time & Sales — fetches aggTrades around the cursor candle
+  let tapeAbort = null;
+  let tapeLastCursorTime = null;
+  const renderTape = (trades) => {
+    const list = $("#tape-list");
+    list.innerHTML = "";
+    if (!trades.length) {
+      $("#tape-status").textContent = "no trades in window";
+      return;
+    }
+    const qtys = trades.map((t) => t.qty).sort((a, b) => a - b);
+    const p95 = qtys[Math.floor(qtys.length * 0.95)] || Infinity;
+    // newest at top
+    for (let i = trades.length - 1; i >= 0; i--) {
+      const t = trades[i];
+      const row = document.createElement("div");
+      row.className = `tape-row ${t.side}${t.qty >= p95 ? " large" : ""}`;
+      const time = new Date(t.time_ms).toISOString().slice(11, 19);
+      row.innerHTML = `<span class="t">${time}</span>` +
+        `<span>${t.price.toFixed(getPrecision(t.price))}</span>` +
+        `<span class="q">${t.qty.toFixed(t.qty >= 100 ? 0 : 2)}</span>`;
+      list.appendChild(row);
+    }
+    const tfSec = TF_SECONDS[session.tf];
+    const open = new Date(session.current_time * 1000).toISOString().slice(11, 16);
+    const close = new Date((session.current_time + tfSec) * 1000).toISOString().slice(11, 16);
+    $("#tape-status").textContent =
+      `${trades.length} prints in ${open}→${close} UTC  ·  large = top 5%`;
+  };
+  const fetchTape = async () => {
+    if (!session) return;
+    if (tapeLastCursorTime === session.current_time) return;
+    tapeLastCursorTime = session.current_time;
+    if (tapeAbort) tapeAbort.abort();
+    tapeAbort = new AbortController();
+    $("#tape-status").textContent = "loading…";
+    try {
+      const data = await api(`/api/session/${session.id}/recent_trades?n=80`,
+        { signal: tapeAbort.signal });
+      renderTape(data.trades || []);
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      $("#tape-status").textContent = `err: ${err.message}`;
+    }
+  };
+
   // ---- Trade rendering
   const renderTrades = () => {
     if (!session) return;
@@ -297,6 +534,7 @@
     }
     markers.sort((a, b) => a.time - b.time);
     candleMarkers.setMarkers(markers);
+    syncTradeZones();
 
     for (const lines of tradePriceLines.values()) {
       for (const line of lines) candleSeries.removePriceLine(line);
@@ -374,6 +612,7 @@
     candleSeries.setData(session.candles);
     renderIndicators();
     renderTrades();
+    fetchTape();
     const atEnd = session.cursor >= session.total - 1;
     $("#cursor-info").textContent = `${session.symbol} ${session.tf}  ${session.cursor + 1} / ${session.total}  @ ${new Date(session.current_time * 1000).toISOString().slice(0, 16).replace("T", " ")}  price ${session.current_price.toFixed(4)}`;
     $("#mark-info").textContent = `Mark: ${session.current_price.toFixed(4)}`;
@@ -403,6 +642,12 @@
     clearAllDrawings();
     candleSeries.setData([]);
     candleMarkers.setMarkers([]);
+    for (const p of tradeZones.values()) candleSeries.detachPrimitive(p);
+    tradeZones.clear();
+    setVolumeProfileVisible(false);
+    tapeLastCursorTime = null;
+    $("#tape-list").innerHTML = "";
+    $("#tape-status").textContent = "";
     for (const lines of tradePriceLines.values()) {
       for (const line of lines) candleSeries.removePriceLine(line);
     }
