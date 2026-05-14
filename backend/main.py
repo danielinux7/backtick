@@ -258,6 +258,38 @@ def close_trade(sid: str, tid: str) -> dict:
     return _serialize_session(sess)
 
 
+@app.get("/api/session/{sid}/liquidations")
+def liquidations(sid: str, from_ts: int, to_ts: int,
+                 percentile: float = 0.995, min_qty: float = 0.0) -> dict:
+    """Heuristic liquidation candidates — aggTrade prints whose qty sits in the
+    top 1 - percentile of the visible window. Not real liquidation data
+    (Binance deprecated /allForceOrders in 2021), but large taker prints are
+    correlated with liquidation cascades and whale exits."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    percentile = max(0.5, min(0.9999, percentile))
+    try:
+        df = fetch_agg_trades(sess.symbol, from_ts * 1000, to_ts * 1000, sess.market)
+    except Exception as e:
+        raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
+    if df.empty:
+        return {"events": [], "threshold": 0.0}
+    threshold = max(float(df["qty"].quantile(percentile)), float(min_qty))
+    outliers = df[df["qty"] >= threshold]
+    events = [
+        {
+            "time_ms": int(r.time_ms),
+            "price": float(r.price),
+            "qty": float(r.qty),
+            "side": "sell" if bool(r.is_buyer_maker) else "buy",
+        }
+        for r in outliers.itertuples(index=False)
+    ]
+    return {"events": events, "threshold": threshold}
+
+
 @app.get("/api/session/{sid}/vol_profile")
 def vol_profile(sid: str, from_ts: int, to_ts: int, buckets: int = 40) -> dict:
     """Aggregate aggTrades inside [from_ts, to_ts] into a volume-by-price

@@ -56,6 +56,7 @@
     wickUpColor: "#26a69a", wickDownColor: "#ef5350",
   });
   const candleMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
+  const liquidationMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
 
   // volume — bottom overlay on its own price scale; auto-scales independently
   const volumeSeries = chart.addSeries(LightweightCharts.HistogramSeries, {
@@ -100,6 +101,7 @@
     try { cvdChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
     _syncing = false;
     scheduleVolProfileFetch();
+    scheduleLiqFetch();
   });
   const showRsi = (visible) => rsiEl.classList.toggle("visible", visible);
   const showCvd = (visible) => cvdEl.classList.toggle("visible", visible);
@@ -238,6 +240,18 @@
     const wantCvd = !!document.querySelector('.ind[data-kind="cvd"]:checked');
     if (wantCvd) { showCvd(true); fetchCvd(); }
     else { showCvd(false); cvdSeries.setData([]); cvdLastCursor = null; }
+
+    const wantLiq = !!document.querySelector('.ind[data-kind="liq"]:checked');
+    if (wantLiq !== liqEnabled) {
+      liqEnabled = wantLiq;
+      if (!liqEnabled) {
+        liqEvents = []; liqLastKey = null; liquidationMarkers.setMarkers([]);
+      } else {
+        fetchLiqMarkers();
+      }
+    } else if (liqEnabled) {
+      fetchLiqMarkers();
+    }
 
     const wantVolume = !!document.querySelector('.ind[data-kind="volume"]:checked');
     volumeSeries.applyOptions({ visible: wantVolume });
@@ -514,6 +528,88 @@
     }
   };
 
+  // ---- Liquidation markers (heuristic, top-percentile taker prints)
+  let liqEvents = [];
+  let liqLastKey = null;
+  let liqAbort = null;
+  let liqFetchTimer = null;
+  let liqEnabled = false;
+
+  // a candle is marked only when one side carries this share of outlier qty
+  const LIQ_IMBALANCE = 0.75;
+
+  const renderLiqMarkers = () => {
+    if (!liqEnabled || !session || !liqEvents.length) {
+      liquidationMarkers.setMarkers([]);
+      return;
+    }
+    const tfSec = TF_SECONDS[session.tf];
+    const tfMs = tfSec * 1000;
+    // per candle, sum outlier qty by side
+    const agg = new Map();   // candleTimeSec -> { buy_qty, sell_qty }
+    for (const e of liqEvents) {
+      const candleTime = Math.floor(e.time_ms / tfMs) * tfSec;
+      let a = agg.get(candleTime);
+      if (!a) { a = { buy_qty: 0, sell_qty: 0 }; agg.set(candleTime, a); }
+      if (e.side === "buy") a.buy_qty += e.qty;
+      else a.sell_qty += e.qty;
+    }
+    const markers = [];
+    for (const [time, a] of agg) {
+      const total = a.buy_qty + a.sell_qty;
+      if (total <= 0) continue;
+      const buyShare = a.buy_qty / total;
+      if (buyShare >= LIQ_IMBALANCE) {
+        markers.push({
+          time, position: "aboveBar", shape: "circle",
+          color: "#ffb74d", text: `L ${Math.round(buyShare * 100)}%`,
+        });
+      } else if ((1 - buyShare) >= LIQ_IMBALANCE) {
+        markers.push({
+          time, position: "belowBar", shape: "circle",
+          color: "#ffb74d", text: `L ${Math.round((1 - buyShare) * 100)}%`,
+        });
+      }
+    }
+    markers.sort((a, b) => a.time - b.time);
+    liquidationMarkers.setMarkers(markers);
+  };
+
+  const fetchLiqMarkers = async () => {
+    if (!session || !liqEnabled) return;
+    const range = chart.timeScale().getVisibleLogicalRange();
+    if (!range) return;
+    const cs = session.candles;
+    if (!cs.length) return;
+    const fromIdx = Math.max(0, Math.floor(range.from));
+    const toIdx = Math.min(cs.length - 1, Math.ceil(range.to));
+    if (toIdx < fromIdx) return;
+    const tfSec = TF_SECONDS[session.tf];
+    const fromTs = cs[fromIdx].time;
+    const toTs = cs[toIdx].time + tfSec;
+    const key = `${fromTs}-${toTs}`;
+    if (key === liqLastKey) return;
+    liqLastKey = key;
+    if (liqAbort) liqAbort.abort();
+    liqAbort = new AbortController();
+    try {
+      const data = await api(
+        `/api/session/${session.id}/liquidations?from_ts=${fromTs}&to_ts=${toTs}&percentile=0.995`,
+        { signal: liqAbort.signal },
+      );
+      liqEvents = data.events || [];
+      renderLiqMarkers();
+    } catch (err) {
+      if (err.name !== "AbortError") setStatus(`liq: ${err.message}`, true);
+    }
+  };
+
+  const scheduleLiqFetch = () => {
+    if (!liqEnabled) return;
+    if (liqFetchTimer) clearTimeout(liqFetchTimer);
+    liqFetchTimer = setTimeout(fetchLiqMarkers, 200);
+  };
+
   // ---- CVD (cumulative volume delta) sub-pane
   let cvdAbort = null;
   let cvdLastCursor = null;
@@ -769,6 +865,7 @@
     for (const p of tradeZones.values()) candleSeries.detachPrimitive(p);
     tradeZones.clear();
     setVolumeProfileVisible(false);
+    liquidationMarkers.setMarkers([]); liqEvents = []; liqLastKey = null;
     cvdSeries.setData([]); showCvd(false); cvdLastCursor = null;
     tapeLastCursorTime = null;
     tapeBuffer = [];
