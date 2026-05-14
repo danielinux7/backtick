@@ -7,7 +7,8 @@ from threading import RLock
 
 import pandas as pd
 
-from .binance import fetch_klines
+from .aggtrades import fetch_agg_trades
+from .binance import TF_MS, fetch_klines
 
 
 TradeStatus = str  # "pending" | "open" | "closed"
@@ -70,23 +71,166 @@ class Session:
     start: str
     end: str
     df: pd.DataFrame
-    cursor: int                              # index of last revealed candle (0-based)
+    cursor: int                              # index of last FULLY revealed candle (0-based)
     trades: list[Trade] = field(default_factory=list)
     lock: RLock = field(default_factory=RLock)
+    # tick-replay state: aggTrades for the FORMING candle (cursor+1), and how
+    # many of those trades have already been revealed.
+    tick_aggs: pd.DataFrame | None = None
+    tick_idx: int = 0
 
     def candles_so_far(self) -> list[dict]:
         sub = self.df.iloc[: self.cursor + 1]
-        return [
+        out = [
             {"time": int(r.time), "open": r.open, "high": r.high,
              "low": r.low, "close": r.close, "volume": r.volume}
             for r in sub.itertuples(index=False)
         ]
+        partial = self.partial_candle()
+        if partial is not None:
+            out.append(partial)
+        return out
+
+    def partial_candle(self) -> dict | None:
+        """OHLC of the not-yet-completed candle, built from revealed ticks. None
+        if we're not currently mid-candle (tick_idx == 0 or no agg data)."""
+        if self.tick_aggs is None or self.tick_idx == 0:
+            return None
+        if self.cursor + 1 >= len(self.df):
+            return None
+        revealed = self.tick_aggs.iloc[: self.tick_idx]
+        if revealed.empty:
+            return None
+        next_kline = self.df.iloc[self.cursor + 1]
+        prices = revealed["price"]
+        return {
+            "time": int(next_kline["time"]),
+            "open": float(prices.iloc[0]),
+            "high": float(prices.max()),
+            "low": float(prices.min()),
+            "close": float(prices.iloc[-1]),
+            "volume": float(revealed["qty"].sum()),
+        }
 
     def current_price(self) -> float:
+        if self.tick_aggs is not None and self.tick_idx > 0:
+            return float(self.tick_aggs.iloc[self.tick_idx - 1]["price"])
         return float(self.df["close"].iloc[self.cursor])
 
     def current_time(self) -> int:
+        if self.tick_aggs is not None and self.tick_idx > 0:
+            return int(self.tick_aggs.iloc[self.tick_idx - 1]["time_ms"] // 1000)
         return int(self.df["time"].iloc[self.cursor])
+
+    def _load_tick_aggs(self) -> None:
+        if self.cursor + 1 >= len(self.df):
+            self.tick_aggs = None
+            self.tick_idx = 0
+            return
+        next_kline = self.df.iloc[self.cursor + 1]
+        start_ms = int(next_kline["time"]) * 1000
+        end_ms = start_ms + TF_MS[self.tf]
+        try:
+            df = fetch_agg_trades(self.symbol, start_ms, end_ms, self.market)
+        except Exception:
+            df = pd.DataFrame(columns=["time_ms", "price", "qty", "is_buyer_maker"])
+        self.tick_aggs = df.reset_index(drop=True)
+        self.tick_idx = 0
+
+    def reset_tick_state(self) -> None:
+        self.tick_aggs = None
+        self.tick_idx = 0
+
+    def step_tick(self, n: int) -> tuple[list[dict], list[Trade]]:
+        """Reveal the next n aggTrades, processing limits / SL / TP per tick.
+        Auto-advances the kline cursor whenever a forming candle's ticks are
+        exhausted (and lazily fetches the next candle's aggTrades)."""
+        new_ticks: list[dict] = []
+        changed: list[Trade] = []
+        seen: set[str] = set()
+
+        remaining = n
+        while remaining > 0 and self.cursor < len(self.df) - 1:
+            if self.tick_aggs is None:
+                self._load_tick_aggs()
+            if self.tick_aggs is None or self.tick_aggs.empty:
+                # symbol+candle has no aggTrades available — fall back to
+                # candle-level processing and move on
+                self.cursor += 1
+                self.tick_aggs = None
+                self.tick_idx = 0
+                for c in self.process_candle():
+                    if c.id not in seen:
+                        seen.add(c.id); changed.append(c)
+                continue
+            avail = len(self.tick_aggs) - self.tick_idx
+            if avail == 0:
+                # forming candle is done — promote it and load the next one
+                self.cursor += 1
+                self.tick_aggs = None
+                self.tick_idx = 0
+                continue
+            take = min(remaining, avail)
+            for i in range(take):
+                t = self.tick_aggs.iloc[self.tick_idx + i]
+                price = float(t["price"])
+                time_ms = int(t["time_ms"])
+                new_ticks.append({
+                    "time_ms": time_ms,
+                    "price": price,
+                    "qty": float(t["qty"]),
+                    "side": "sell" if bool(t["is_buyer_maker"]) else "buy",
+                })
+                for c in self._process_tick(price, time_ms):
+                    if c.id not in seen:
+                        seen.add(c.id); changed.append(c)
+            self.tick_idx += take
+            remaining -= take
+        return new_ticks, changed
+
+    def _process_tick(self, price: float, time_ms: int) -> list[Trade]:
+        """Per-tick limit fill + SL/TP check. Much sharper than candle-level
+        because we know the exact intra-candle ordering of prints."""
+        time_s = time_ms // 1000
+        changed: list[Trade] = []
+        just_filled: set[str] = set()
+        for t in self.trades:
+            if t.status != "pending" or t.limit_price is None:
+                continue
+            if t.side == "long" and price <= t.limit_price:
+                ok = True
+            elif t.side == "short" and price >= t.limit_price:
+                ok = True
+            else:
+                ok = False
+            if ok:
+                t.status = "open"
+                t.entry_time = time_s
+                t.entry_price = t.limit_price
+                just_filled.add(t.id)
+                changed.append(t)
+        for t in self.trades:
+            if t.status != "open" or t.sl is None or t.id in just_filled:
+                continue
+            hit: float | None = None
+            reason: str | None = None
+            if t.side == "long":
+                if price <= t.sl:
+                    hit, reason = t.sl, "sl"
+                elif t.tp is not None and price >= t.tp:
+                    hit, reason = t.tp, "tp"
+            else:
+                if price >= t.sl:
+                    hit, reason = t.sl, "sl"
+                elif t.tp is not None and price <= t.tp:
+                    hit, reason = t.tp, "tp"
+            if hit is not None:
+                t.status = "closed"
+                t.exit_time = time_s
+                t.exit_price = hit
+                t.exit_reason = reason
+                changed.append(t)
+        return changed
 
     def process_candle(self) -> list[Trade]:
         """Fill pending limits, then trigger SL/TP. Returns trades whose state changed.

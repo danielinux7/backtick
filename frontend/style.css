@@ -53,8 +53,29 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .indicators label { cursor: pointer; }
 
 .side-pane { display: flex; flex-direction: column; border-left: 1px solid #1e222d; background: #0f1218; overflow: hidden; }
-.trade-panel, .trades-panel { padding: 10px; border-bottom: 1px solid #1e222d; }
-.trade-panel h3, .trades-panel h3 { margin: 0 0 8px 0; font-size: 13px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
+.trade-panel, .trades-panel, .tape-panel {
+  padding: 10px; border-bottom: 1px solid #1e222d;
+  display: flex; flex-direction: column; min-height: 0; flex-shrink: 0;
+}
+/* tape & trades flex to share remaining space; trade panel is content-sized */
+.side-pane > .tape-panel,
+.side-pane > .trades-panel { flex: 1 1 0; }
+.side-pane > .trade-panel  { flex: 0 0 auto; }
+/* collapsed state — only header visible, no flex grow */
+.side-pane > .collapsed { flex: 0 0 auto; }
+.side-pane > .collapsed > :not(h3) { display: none; }
+/* clickable header with chevron */
+.trade-panel h3, .trades-panel h3, .tape-panel h3 {
+  margin: 0 0 8px 0; font-size: 13px; color: #999;
+  text-transform: uppercase; letter-spacing: 1px;
+  cursor: pointer; user-select: none;
+}
+.trade-panel h3::before, .trades-panel h3::before, .tape-panel h3::before {
+  content: "▼"; display: inline-block; width: 14px; font-size: 9px;
+  color: #666; transition: transform 0.15s;
+}
+.collapsed > h3::before { transform: rotate(-90deg); }
+.collapsed > h3 { margin-bottom: 0; }
 .row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; position: relative; }
 .row label { font-size: 12px; display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; position: relative; }
 .row label.toggle-label { gap: 6px; flex: 0 0 70px; cursor: pointer; white-space: nowrap; }
@@ -72,10 +93,8 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .pick:hover { background: #3a3e49; }
 .pick.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
 
-.tape-panel { padding: 10px; border-bottom: 1px solid #1e222d; display: flex; flex-direction: column; max-height: 240px; }
-.tape-panel h3 { margin: 0 0 6px 0; font-size: 13px; color: #999; text-transform: uppercase; letter-spacing: 1px; }
 .tape-status { font-size: 11px; color: #777; margin-bottom: 4px; min-height: 14px; }
-.tape-list { flex: 1; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.5; }
+.tape-list { flex: 1; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.5; min-height: 0; }
 .tape-row { display: grid; grid-template-columns: 60px 1fr 1fr; gap: 6px; padding: 1px 4px; border-radius: 2px; }
 .tape-row.buy  { background: rgba(38, 166, 154, 0.10); color: #4dd0c1; }
 .tape-row.sell { background: rgba(239, 83, 80, 0.10); color: #ff7d75; }

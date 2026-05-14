@@ -462,37 +462,63 @@
     }
   };
 
-  // ---- Time & Sales — fetches aggTrades around the cursor candle
+  // ---- Time & Sales
+  // Two modes:
+  //   - candle mode: each session update re-pulls last N prints from the cursor candle
+  //   - tick mode: tape accumulates trades streamed in via tick_step
   let tapeAbort = null;
   let tapeLastCursorTime = null;
-  const renderTape = (trades) => {
+  let tapeBuffer = [];        // accumulated prints (newest at end internally)
+  const TAPE_CAP = 400;
+
+  const tapeRowHtml = (t, isLarge) => {
+    const time = new Date(t.time_ms).toISOString().slice(11, 19);
+    return `<span class="t">${time}</span>` +
+      `<span>${t.price.toFixed(getPrecision(t.price))}</span>` +
+      `<span class="q">${t.qty.toFixed(t.qty >= 100 ? 0 : 2)}</span>`;
+  };
+
+  const renderTape = () => {
     const list = $("#tape-list");
     list.innerHTML = "";
-    if (!trades.length) {
-      $("#tape-status").textContent = "no trades in window";
+    if (!tapeBuffer.length) {
+      $("#tape-status").textContent = session ? "no trades yet" : "";
       return;
     }
-    const qtys = trades.map((t) => t.qty).sort((a, b) => a - b);
+    const qtys = tapeBuffer.map((t) => t.qty).sort((a, b) => a - b);
     const p95 = qtys[Math.floor(qtys.length * 0.95)] || Infinity;
     // newest at top
-    for (let i = trades.length - 1; i >= 0; i--) {
-      const t = trades[i];
+    for (let i = tapeBuffer.length - 1; i >= 0; i--) {
+      const t = tapeBuffer[i];
       const row = document.createElement("div");
       row.className = `tape-row ${t.side}${t.qty >= p95 ? " large" : ""}`;
-      const time = new Date(t.time_ms).toISOString().slice(11, 19);
-      row.innerHTML = `<span class="t">${time}</span>` +
-        `<span>${t.price.toFixed(getPrecision(t.price))}</span>` +
-        `<span class="q">${t.qty.toFixed(t.qty >= 100 ? 0 : 2)}</span>`;
+      row.innerHTML = tapeRowHtml(t);
       list.appendChild(row);
     }
-    const tfSec = TF_SECONDS[session.tf];
-    const open = new Date(session.current_time * 1000).toISOString().slice(11, 16);
-    const close = new Date((session.current_time + tfSec) * 1000).toISOString().slice(11, 16);
-    $("#tape-status").textContent =
-      `${trades.length} prints in ${open}→${close} UTC  ·  large = top 5%`;
+    const speed = $("#speed").value;
+    if (speed === "tick") {
+      $("#tape-status").textContent = `${tapeBuffer.length} prints · tick replay · large = top 5%`;
+    } else {
+      const tfSec = TF_SECONDS[session.tf];
+      const open = new Date(session.current_time * 1000).toISOString().slice(11, 16);
+      const close = new Date((session.current_time + tfSec) * 1000).toISOString().slice(11, 16);
+      $("#tape-status").textContent =
+        `${tapeBuffer.length} prints in ${open}→${close} UTC  ·  large = top 5%`;
+    }
   };
+
+  const appendTicks = (ticks) => {
+    if (!ticks || !ticks.length) return;
+    tapeBuffer.push(...ticks);
+    if (tapeBuffer.length > TAPE_CAP) {
+      tapeBuffer = tapeBuffer.slice(-TAPE_CAP);
+    }
+    renderTape();
+  };
+
   const fetchTape = async () => {
     if (!session) return;
+    if ($("#speed").value === "tick") return;   // tick mode handles its own tape
     if (tapeLastCursorTime === session.current_time) return;
     tapeLastCursorTime = session.current_time;
     if (tapeAbort) tapeAbort.abort();
@@ -501,7 +527,8 @@
     try {
       const data = await api(`/api/session/${session.id}/recent_trades?n=80`,
         { signal: tapeAbort.signal });
-      renderTape(data.trades || []);
+      tapeBuffer = data.trades || [];
+      renderTape();
     } catch (err) {
       if (err.name === "AbortError") return;
       $("#tape-status").textContent = `err: ${err.message}`;
@@ -646,6 +673,7 @@
     tradeZones.clear();
     setVolumeProfileVisible(false);
     tapeLastCursorTime = null;
+    tapeBuffer = [];
     $("#tape-list").innerHTML = "";
     $("#tape-status").textContent = "";
     for (const lines of tradePriceLines.values()) {
@@ -720,6 +748,22 @@
         method: "POST", body: JSON.stringify({ n }),
       });
       applySession(data);
+    } catch (err) { setStatus(err.message, true); stopPlay(); }
+  };
+
+  // tick-mode stepping — reveals n raw aggTrades, accumulates them into the
+  // tape, and lets the chart's partial candle update as ticks come in.
+  const TICK_BATCH = 20;     // trades per tick step
+  const TICK_INTERVAL_MS = 60;
+  const tickStep = async () => {
+    if (!session) return;
+    try {
+      const data = await api(`/api/session/${session.id}/tick_step`, {
+        method: "POST", body: JSON.stringify({ n: TICK_BATCH }),
+      });
+      applySession(data);
+      appendTicks(data.new_ticks);
+      if (data.at_end) stopPlay();
     } catch (err) { setStatus(err.message, true); stopPlay(); }
   };
   const backN = async (n) => {
@@ -799,10 +843,14 @@
 
   const startPlay = () => {
     if (playTimer || !session) return;
-    if (session.cursor >= session.total - 1) return;
-    const speed = parseInt($("#speed").value, 10);
+    if (session.cursor >= session.total - 1 && !session.in_tick) return;
     $("#play").textContent = "Pause";
-    playTimer = setInterval(() => stepN(parseInt($("#step-n").value, 10) || 1), speed);
+    if ($("#speed").value === "tick") {
+      playTimer = setInterval(tickStep, TICK_INTERVAL_MS);
+    } else {
+      const speed = parseInt($("#speed").value, 10);
+      playTimer = setInterval(() => stepN(parseInt($("#step-n").value, 10) || 1), speed);
+    }
   };
   const stopPlay = () => {
     if (playTimer) { clearInterval(playTimer); playTimer = null; }
@@ -992,7 +1040,10 @@
 
   // ---- Wire up
   setupForm.addEventListener("submit", (e) => { e.preventDefault(); loadSession(); });
-  $("#next-1").addEventListener("click", () => stepN(parseInt($("#step-n").value, 10) || 1));
+  $("#next-1").addEventListener("click", () => {
+    if ($("#speed").value === "tick") tickStep();
+    else stepN(parseInt($("#step-n").value, 10) || 1);
+  });
   $("#back-1").addEventListener("click", () => backN(parseInt($("#step-n").value, 10) || 1));
   $("#play").addEventListener("click", () => (playTimer ? stopPlay() : startPlay()));
   $("#long-btn").addEventListener("click", () => placeTrade("long"));
@@ -1024,6 +1075,13 @@
     });
   });
   $("#clear-drawings").addEventListener("click", clearAllDrawings);
+
+  // collapsible side-pane panels — click a header to toggle
+  document.querySelectorAll(".side-pane > .trade-panel > h3, " +
+                           ".side-pane > .tape-panel > h3, " +
+                           ".side-pane > .trades-panel > h3").forEach((h) => {
+    h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed"));
+  });
 
   // SL/TP toggle behavior
   const wireToggle = (box, input) => {

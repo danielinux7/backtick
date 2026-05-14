@@ -55,6 +55,7 @@ class TradeReq(BaseModel):
 def _serialize_session(sess) -> dict:
     mark = sess.current_price()
     candles = sess.candles_so_far()
+    in_tick = sess.tick_aggs is not None and sess.tick_idx > 0
     return {
         "id": sess.id,
         "symbol": sess.symbol,
@@ -68,6 +69,8 @@ def _serialize_session(sess) -> dict:
         "current_price": mark,
         "candles": candles,
         "trades": [t.to_dict(mark) for t in sess.trades],
+        "in_tick": in_tick,                                # partial candle present
+        "tick_idx": int(sess.tick_idx) if in_tick else 0,
     }
 
 
@@ -108,6 +111,13 @@ def step(sid: str, req: StepReq) -> dict:
     with sess.lock:
         changed = []
         n = max(1, min(req.n, 5000))
+        # if a tick-mode replay had a partial candle in flight, finalize it
+        # via the kline before stepping further
+        if sess.tick_idx > 0 and sess.cursor < len(sess.df) - 1:
+            sess.cursor += 1
+            sess.reset_tick_state()
+            changed.extend(sess.process_candle())
+            n -= 1
         for _ in range(n):
             if sess.cursor >= len(sess.df) - 1:
                 break
@@ -116,6 +126,25 @@ def step(sid: str, req: StepReq) -> dict:
     body = _serialize_session(sess)
     body["changed"] = [t.to_dict(sess.current_price()) for t in changed]
     body["at_end"] = sess.cursor >= len(sess.df) - 1
+    return body
+
+
+@app.post("/api/session/{sid}/tick_step")
+def tick_step(sid: str, req: StepReq) -> dict:
+    """Advance n aggTrades (lazily fetched per forming candle). Returns the
+    newly-revealed prints so the frontend tape can stream them in."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    with sess.lock:
+        n = max(1, min(req.n, 5000))
+        new_ticks, changed = sess.step_tick(n)
+    body = _serialize_session(sess)
+    body["new_ticks"] = new_ticks
+    body["changed"] = [t.to_dict(sess.current_price()) for t in changed]
+    body["at_end"] = (sess.cursor >= len(sess.df) - 1
+                     and (sess.tick_aggs is None or sess.tick_idx >= len(sess.tick_aggs)))
     return body
 
 
@@ -128,6 +157,7 @@ def back(sid: str, req: StepReq) -> dict:
         raise HTTPException(404, "session not found")
     with sess.lock:
         n = max(1, min(req.n, 5000))
+        sess.reset_tick_state()       # rewind cancels any partial-candle tick replay
         sess.cursor = max(0, sess.cursor - n)
         new_time = sess.current_time()
         survivors: list[Trade] = []
