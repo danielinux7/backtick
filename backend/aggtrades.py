@@ -28,6 +28,17 @@ _COLS_SPOT = _COLS_FUT + ["is_best_match"]
 OUT_COLS = ["time_ms", "price", "qty", "is_buyer_maker"]
 
 
+def _empty_df() -> pd.DataFrame:
+    """Empty frame with the right dtypes — important so concats with non-empty
+    frames don't degrade `is_buyer_maker` from bool to object/int64."""
+    return pd.DataFrame({
+        "time_ms": pd.Series(dtype="int64"),
+        "price": pd.Series(dtype="float64"),
+        "qty": pd.Series(dtype="float64"),
+        "is_buyer_maker": pd.Series(dtype="bool"),
+    })
+
+
 def _normalize_time_ms(s: pd.Series) -> pd.Series:
     """Coerce a timestamp column to int64 ms. Binance Vision newer dumps use µs."""
     if s.empty:
@@ -77,20 +88,27 @@ def _fetch_vision_day(symbol: str, market: str, date: str) -> pd.DataFrame:
 
 def _fetch_rest_range(symbol: str, market: str, start_ms: int, end_ms: int) -> pd.DataFrame:
     """Pull aggTrades via REST for a (typically short) range, paginated by trade id.
-    Binance caps each response at 1000 rows; we step forward by the last trade's time + 1."""
+    Binance caps each response at 1000 rows; we step forward by the last trade's time + 1.
+    On 429 (rate limit) we abort cleanly and return whatever's collected so far rather
+    than propagating the error — calling code degrades to 'no data for this window'."""
     base = "https://fapi.binance.com" if market == "futures" else "https://api.binance.com"
     path = "/fapi/v1/aggTrades" if market == "futures" else "/api/v3/aggTrades"
     rows: list[dict] = []
     cur = start_ms
     with httpx.Client(timeout=30) as client:
         while cur < end_ms:
-            r = client.get(f"{base}{path}", params={
-                "symbol": symbol.upper(),
-                "startTime": cur,
-                "endTime": min(end_ms, cur + 3_600_000),   # 1-hour window upper-bound
-                "limit": 1000,
-            })
-            r.raise_for_status()
+            try:
+                r = client.get(f"{base}{path}", params={
+                    "symbol": symbol.upper(),
+                    "startTime": cur,
+                    "endTime": min(end_ms, cur + 3_600_000),
+                    "limit": 1000,
+                })
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    break       # rate limited — stop fetching, return partial
+                raise
             batch = r.json()
             if not batch:
                 cur = min(end_ms, cur + 3_600_000)
@@ -99,16 +117,16 @@ def _fetch_rest_range(symbol: str, market: str, start_ms: int, end_ms: int) -> p
             last_t = int(batch[-1]["T"])
             cur = last_t + 1
             if len(batch) < 1000:
-                # this window is exhausted; the next loop iteration will advance to end_ms
                 cur = max(cur, min(end_ms, cur + 3_600_000))
     if not rows:
-        return pd.DataFrame(columns=OUT_COLS)
+        return _empty_df()
     df = pd.DataFrame({
         "time_ms": [int(r["T"]) for r in rows],
         "price": [float(r["p"]) for r in rows],
         "qty": [float(r["q"]) for r in rows],
         "is_buyer_maker": [bool(r["m"]) for r in rows],
-    })
+    }).astype({"time_ms": "int64", "price": "float64",
+               "qty": "float64", "is_buyer_maker": "bool"})
     return df.sort_values("time_ms").reset_index(drop=True)
 
 
@@ -121,14 +139,19 @@ def _ensure_day(symbol: str, market: str, date: str) -> pd.DataFrame:
             return df
         except Exception:
             cache.unlink(missing_ok=True)
+    today_iso = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
     try:
         df = _fetch_vision_day(symbol, market, date)
     except FileNotFoundError:
+        if date >= today_iso:
+            # binance.vision publishes complete past days only — today isn't there
+            # yet. Skip REST to avoid burning the rate limit; live mode is expected
+            # to feed current-day data through the frontend WebSocket buffer.
+            return _empty_df()
         start_ms = int(dt.datetime.fromisoformat(date)
                        .replace(tzinfo=dt.timezone.utc).timestamp() * 1000)
         end_ms = start_ms + 86_400_000
         df = _fetch_rest_range(symbol, market, start_ms, end_ms)
-    today_iso = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
     if date < today_iso and not df.empty:
         df.to_parquet(cache, index=False)
     return df
@@ -145,10 +168,12 @@ def fetch_agg_trades(symbol: str, start_ms: int, end_ms: int,
     pieces: list[pd.DataFrame] = []
     cur = d0
     while cur <= d1:
-        pieces.append(_ensure_day(symbol, market, cur.isoformat()))
+        day = _ensure_day(symbol, market, cur.isoformat())
+        if not day.empty:                # skip empty pieces so concat doesn't downcast dtypes
+            pieces.append(day)
         cur += dt.timedelta(days=1)
-    df = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame(columns=OUT_COLS)
-    if df.empty:
-        return df
+    if not pieces:
+        return _empty_df()
+    df = pd.concat(pieces, ignore_index=True)
     mask = (df["time_ms"] >= start_ms) & (df["time_ms"] <= end_ms)
     return df.loc[mask].sort_values("time_ms").reset_index(drop=True)

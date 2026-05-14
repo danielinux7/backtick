@@ -8,6 +8,14 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .setup button { cursor: pointer; background: #2962ff; border-color: #2962ff; }
 .setup button:hover { background: #1d4ed8; }
 #status { font-size: 12px; color: #f7a; }
+.live-indicator { font-size: 11px; font-weight: 700; color: #81c784; letter-spacing: 0.5px;
+  display: inline-flex; align-items: center; gap: 4px;
+  animation: live-pulse 1.5s ease-in-out infinite; }
+@keyframes live-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.55 } }
+/* hide replay-only controls in live mode */
+.live-mode .controls,
+.live-mode #replay-date,
+.live-mode input[name=warmup] { display: none !important; }
 
 main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
 
@@ -36,11 +44,19 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 #chart { flex: 1; min-height: 0; }
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
 /* sub-pane visibility — no height transition so the chart's autoSize doesn't
-   redraw at every interpolated height (was causing initial flicker) */
+   redraw at every interpolated height (was causing initial flicker).
+   Inline style.height (set by the resize handle) overrides the defaults. */
 #rsi-chart { height: 0; }
-#rsi-chart.visible { height: 160px; border-top: 1px solid #1e222d; }
+#rsi-chart.visible { height: 160px; }
 #cvd-chart { height: 0; }
-#cvd-chart.visible { height: 140px; border-top: 1px solid #1e222d; }
+#cvd-chart.visible { height: 140px; }
+
+.pane-resize {
+  height: 5px; flex-shrink: 0; background: #1e222d;
+  cursor: ns-resize; border-top: 1px solid #2a2e39;
+}
+.pane-resize:hover { background: #2962ff; }
+.pane-resize.hidden { display: none; }
 
 .controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; flex-shrink: 0; }
 .controls-left { display: flex; gap: 8px; align-items: center; justify-self: start; }

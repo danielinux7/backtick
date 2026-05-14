@@ -34,10 +34,11 @@ class CreateSessionReq(BaseModel):
     symbol: str = Field(..., examples=["SOLUSDT"])
     market: str = Field("spot", pattern="^(spot|futures)$")
     tf: str = Field(..., examples=["4h"])
-    start: str
-    end: str
+    start: str | None = None
+    end: str | None = None
     warmup: int = 100
     replay_ts: int | None = None   # unix seconds; if set, cursor lands on first candle >= this
+    live: bool = False             # true = pull recent klines and stream live updates client-side
 
 
 class StepReq(BaseModel):
@@ -51,6 +52,28 @@ class TradeReq(BaseModel):
     limit_price: float | None = None
     sl: float | None = None
     tp: float | None = None
+
+
+def _get_agg_trades(sess, start_ms: int, end_ms: int) -> pd.DataFrame:
+    """Return aggTrades in [start_ms, end_ms] from the on-disk archive plus the
+    session's live-buffer (in live mode), so indicators can see today's data
+    that hasn't been published to binance.vision yet."""
+    df = fetch_agg_trades(sess.symbol, start_ms, end_ms, sess.market)
+    if not sess.is_live or not sess.live_aggtrades:
+        return df
+    live_rows = [t for t in sess.live_aggtrades
+                 if start_ms <= int(t["time_ms"]) <= end_ms]
+    if not live_rows:
+        return df
+    live_df = pd.DataFrame(live_rows)[["time_ms", "price", "qty", "is_buyer_maker"]]
+    live_df["time_ms"] = live_df["time_ms"].astype("int64")
+    live_df["price"] = live_df["price"].astype("float64")
+    live_df["qty"] = live_df["qty"].astype("float64")
+    live_df["is_buyer_maker"] = live_df["is_buyer_maker"].astype(bool)
+    if df.empty:
+        return live_df.sort_values("time_ms").reset_index(drop=True)
+    return (pd.concat([df, live_df], ignore_index=True)
+            .sort_values("time_ms").reset_index(drop=True))
 
 
 def _serialize_session(sess) -> dict:
@@ -72,6 +95,7 @@ def _serialize_session(sess) -> dict:
         "trades": [t.to_dict(mark) for t in sess.trades],
         "in_tick": in_tick,                                # partial candle present
         "tick_idx": int(sess.tick_idx) if in_tick else 0,
+        "is_live": bool(sess.is_live),
     }
 
 
@@ -86,7 +110,7 @@ def create_session(req: CreateSessionReq) -> dict:
         raise HTTPException(400, f"unsupported tf {req.tf}")
     try:
         sess = store.create(req.symbol, req.market, req.tf, req.start, req.end,
-                            warmup=req.warmup, replay_ts=req.replay_ts)
+                            warmup=req.warmup, replay_ts=req.replay_ts, live=req.live)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -269,7 +293,7 @@ def footprint(sid: str, from_ts: int, to_ts: int, levels: int = 10) -> dict:
         raise HTTPException(404, "session not found")
     levels = max(4, min(40, levels))
     try:
-        df = fetch_agg_trades(sess.symbol, from_ts * 1000, to_ts * 1000, sess.market)
+        df = _get_agg_trades(sess, from_ts * 1000, to_ts * 1000)
     except Exception as e:
         raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
     if df.empty:
@@ -321,7 +345,7 @@ def liquidations(sid: str, from_ts: int, to_ts: int,
         raise HTTPException(404, "session not found")
     percentile = max(0.5, min(0.9999, percentile))
     try:
-        df = fetch_agg_trades(sess.symbol, from_ts * 1000, to_ts * 1000, sess.market)
+        df = _get_agg_trades(sess, from_ts * 1000, to_ts * 1000)
     except Exception as e:
         raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
     if df.empty:
@@ -350,7 +374,7 @@ def vol_profile(sid: str, from_ts: int, to_ts: int, buckets: int = 40) -> dict:
         raise HTTPException(404, "session not found")
     buckets = max(8, min(120, buckets))
     try:
-        df = fetch_agg_trades(sess.symbol, from_ts * 1000, to_ts * 1000, sess.market)
+        df = _get_agg_trades(sess, from_ts * 1000, to_ts * 1000)
     except Exception as e:
         raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
     if df.empty:
@@ -409,7 +433,7 @@ def cvd(sid: str) -> dict:
             start_ms = min(missing) * 1000
             end_ms = max(missing) * 1000 + tf_ms
             try:
-                df = fetch_agg_trades(sess.symbol, start_ms, end_ms, sess.market)
+                df = _get_agg_trades(sess, start_ms, end_ms)
             except Exception as e:
                 raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
             if df.empty:
@@ -472,7 +496,7 @@ def recent_trades(sid: str, n: int = 60) -> dict:
     for window_candles in (1, 3, 10):
         start_ms = end_ms - tf_ms * window_candles
         try:
-            df = fetch_agg_trades(sess.symbol, start_ms, end_ms, sess.market)
+            df = _get_agg_trades(sess, start_ms, end_ms)
         except Exception as e:
             raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
         if len(df) >= n or window_candles == 10:
@@ -489,6 +513,75 @@ def recent_trades(sid: str, n: int = 60) -> dict:
             for r in df.itertuples(index=False)
         ],
     }
+
+
+class PushTicksReq(BaseModel):
+    ticks: list[dict]
+
+
+class PushKlineReq(BaseModel):
+    time: int           # candle open time, seconds
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+@app.post("/api/session/{sid}/push_ticks")
+def push_ticks(sid: str, req: PushTicksReq) -> dict:
+    """Frontend streams live aggTrades here (in live mode) so indicators that
+    aggregate aggTrades can see today's data. Each tick: {time_ms, price, qty,
+    is_buyer_maker}. We also invalidate CVD cache for the candles those ticks
+    touch so the running cumulative recomputes."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    if not sess.is_live:
+        return {"buffered": 0}
+    with sess.lock:
+        sess.live_aggtrades.extend(req.ticks)
+        # drop anything older than 24h to keep memory bounded
+        cutoff = (sess.df["time"].iloc[0] * 1000) if len(sess.df) else 0
+        if cutoff:
+            sess.live_aggtrades = [t for t in sess.live_aggtrades
+                                   if int(t["time_ms"]) >= cutoff]
+        # invalidate CVD cache for any candles those ticks touched
+        tf_s = TF_MS[sess.tf] // 1000
+        for t in req.ticks:
+            candle_open = (int(t["time_ms"]) // (tf_s * 1000)) * tf_s
+            sess.cvd_cache.pop(candle_open, None)
+    return {"buffered": len(sess.live_aggtrades)}
+
+
+@app.post("/api/session/{sid}/push_kline")
+def push_kline(sid: str, req: PushKlineReq) -> dict:
+    """Frontend tells the backend about a newly-closed kline so indicator
+    endpoints can include it in their per-candle aggregation."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    if not sess.is_live:
+        return {"appended": False}
+    with sess.lock:
+        last_time = int(sess.df["time"].iloc[-1]) if len(sess.df) else 0
+        if req.time <= last_time:
+            return {"appended": False}      # already known or stale
+        new_row = pd.DataFrame([{
+            "time": int(req.time),
+            "open": float(req.open),
+            "high": float(req.high),
+            "low": float(req.low),
+            "close": float(req.close),
+            "volume": float(req.volume),
+        }])
+        sess.df = pd.concat([sess.df, new_row], ignore_index=True)
+        sess.cursor = len(sess.df) - 1
+        # the newly-closed candle's CVD should be (re)computed from buffered ticks
+        sess.cvd_cache.pop(int(req.time), None)
+    return {"appended": True, "cursor": sess.cursor}
 
 
 @app.delete("/api/session/{sid}")

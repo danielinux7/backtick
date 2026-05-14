@@ -13,15 +13,20 @@
   <header>
     <div class="brand">Chart Replay</div>
     <form id="setup-form" class="setup">
+      <select name="mode" id="mode-select" title="Replay = historical chart; Live = real-time Binance stream">
+        <option value="live" selected>Live</option>
+        <option value="replay">Replay</option>
+      </select>
       <input name="symbol" placeholder="SOLUSDT" value="SOLUSDT" required />
       <select name="market">
         <option value="spot">spot</option>
         <option value="futures">futures</option>
       </select>
       <select name="tf" id="tf-select"></select>
-      <input name="replay_date" id="replay-date" placeholder="dd/mm/yyyy" required style="width:120px" />
+      <input name="replay_date" id="replay-date" placeholder="dd/mm/yyyy" style="width:120px" />
       <input name="warmup" type="number" value="100" min="10" max="2000" title="warmup candles shown before the replay date" style="width:80px" />
       <button type="submit">Load</button>
+      <span id="live-indicator" class="live-indicator" style="display:none">● LIVE</span>
     </form>
     <div id="status"></div>
   </header>
@@ -38,7 +43,9 @@
       <div id="hlines-strip" class="hlines-strip"></div>
       <div class="chart-stack">
         <div id="chart"></div>
+        <div class="pane-resize hidden" data-target="rsi"></div>
         <div id="rsi-chart"></div>
+        <div class="pane-resize hidden" data-target="cvd"></div>
         <div id="cvd-chart"></div>
         <div id="arm-hint" class="arm-hint" style="display:none"></div>
       </div>

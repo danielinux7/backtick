@@ -104,10 +104,52 @@
     scheduleLiqFetch();
     scheduleFootprintFetch();
   });
-  const showRsi = (visible) => rsiEl.classList.toggle("visible", visible);
-  const showCvd = (visible) => cvdEl.classList.toggle("visible", visible);
+  // sub-pane visibility — sync time scale on show so the panes don't paint
+  // misaligned (they only resync via subscribeVisibleLogicalRangeChange when
+  // the user scrolls, hence the "jumps back into place" bug)
+  const syncSubPanes = () => {
+    const r = chart.timeScale().getVisibleLogicalRange();
+    if (!r) return;
+    try { rsiChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
+    try { cvdChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
+  };
+  const showPane = (el, visible, targetKey) => {
+    const handle = document.querySelector(`.pane-resize[data-target="${targetKey}"]`);
+    if (handle) handle.classList.toggle("hidden", !visible);
+    el.classList.toggle("visible", visible);
+    if (!visible) el.style.height = "";    // drop any drag-set height so re-show uses default
+    else requestAnimationFrame(syncSubPanes);
+  };
+  const showRsi = (visible) => showPane(rsiEl, visible, "rsi");
+  const showCvd = (visible) => showPane(cvdEl, visible, "cvd");
   showRsi(false);
   showCvd(false);
+
+  // wire the drag handles — pulling up enlarges the sub-pane
+  const wireResize = (targetKey, targetEl) => {
+    const handle = document.querySelector(`.pane-resize[data-target="${targetKey}"]`);
+    if (!handle) return;
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = targetEl.getBoundingClientRect().height;
+      const onMove = (ev) => {
+        const dy = startY - ev.clientY;          // dragging up = positive dy
+        const newH = Math.max(60, Math.min(window.innerHeight * 0.6, startH + dy));
+        targetEl.style.height = newH + "px";
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.body.style.cursor = "ns-resize";
+    });
+  };
+  wireResize("rsi", rsiEl);
+  wireResize("cvd", cvdEl);
 
   // ---- Ctrl+Wheel zoom with locked price/bar ratio (TradingView-style)
   // Plain wheel is a no-op; Ctrl/Cmd+Wheel zooms time and price together,
@@ -312,6 +354,7 @@
   let playTimer = null;
   let loadAbort = null;          // AbortController for in-flight session load
   let armedFor = null;          // "limit" | "sl" | "tp" | "hline" | "measure" | null
+  let liveWs = null;            // Binance WebSocket in live mode
 
   // drawings
   const hlines = [];                   // [{ id, line, price, color }]
@@ -429,6 +472,8 @@
         `/api/session/${session.id}/vol_profile?from_ts=${fromTs}&to_ts=${toTs}&buckets=40`,
         { signal: volProfileAbort.signal },
       );
+      // primitive may have been detached while we were awaiting
+      if (!volumeProfile) return;
       volProfileData = data;
       volumeProfile.requestRedraw();
     } catch (err) {
@@ -660,6 +705,7 @@
         `/api/session/${session.id}/footprint?from_ts=${fromTs}&to_ts=${toTs}&levels=10`,
         { signal: footprintAbort.signal },
       );
+      if (!footprintPrim) return;          // detached during fetch
       footprintData = data.candles || [];
       footprintPrim.requestRedraw();
     } catch (err) {
@@ -783,6 +829,9 @@
       cvdSeries.setData((data.points || []).map((p) => ({
         time: p.time, open: p.open, high: p.high, low: p.low, close: p.close,
       })));
+      // setData on a sub-pane chart can reset its visible range — re-sync after
+      // it arrives so the CVD candles stay aligned under the price chart
+      syncSubPanes();
     } catch (err) {
       if (err.name !== "AbortError") setStatus(`cvd: ${err.message}`, true);
     }
@@ -1018,6 +1067,7 @@
   const resetForNewSession = () => {
     stopPlay();
     disarm();
+    closeLiveStream();
     clearAllDrawings();
     candleSeries.setData([]);
     candleMarkers.setMarkers([]);
@@ -1049,50 +1099,185 @@
     session = null;
   };
 
+  // ---- Live mode (Binance WebSocket stream)
+  let liveTickBuffer = [];
+  let livePushTimer = null;
+  let liveLastKlineTime = null;       // open time (s) of most recently CLOSED kline we've pushed
+
+  const stopLivePush = () => {
+    if (livePushTimer) clearInterval(livePushTimer);
+    livePushTimer = null;
+    liveTickBuffer = [];
+    liveLastKlineTime = null;
+  };
+
+  const refreshActiveIndicators = () => {
+    // re-fetch only what's currently visible — backend has fresh live data buffered
+    if (document.querySelector('.ind[data-kind="cvd"]:checked')) {
+      cvdLastCursor = null; fetchCvd();
+    }
+    if (volumeProfile) { volProfileLastKey = null; fetchVolProfile(); }
+    if (liqEnabled)    { liqLastKey = null; fetchLiqMarkers(); }
+    if (footprintPrim) { footprintLastKey = null; fetchFootprint(); }
+  };
+
+  const pushLiveTicks = async () => {
+    if (!session || !session.is_live || liveTickBuffer.length === 0) return;
+    const batch = liveTickBuffer;
+    liveTickBuffer = [];
+    try {
+      await api(`/api/session/${session.id}/push_ticks`, {
+        method: "POST", body: JSON.stringify({ ticks: batch }),
+      });
+      refreshActiveIndicators();
+    } catch (err) {
+      // requeue on failure so we don't lose data
+      liveTickBuffer.unshift(...batch);
+    }
+  };
+
+  const startLivePush = () => {
+    stopLivePush();
+    livePushTimer = setInterval(pushLiveTicks, 2000);
+  };
+
+  const closeLiveStream = () => {
+    stopLivePush();
+    if (liveWs) {
+      try { liveWs.close(); } catch (_) {}
+      liveWs = null;
+    }
+  };
+
+  const handleLiveKline = async (k) => {
+    // k = { t (open ms), o, h, l, c, v, x (closed?), ... }
+    if (!session) return;
+    const candle = {
+      time: Math.floor(k.t / 1000),
+      open: parseFloat(k.o),
+      high: parseFloat(k.h),
+      low: parseFloat(k.l),
+      close: parseFloat(k.c),
+      volume: parseFloat(k.v),
+    };
+    candleSeries.update(candle);
+    session.current_time = candle.time;
+    session.current_price = candle.close;
+    $("#cursor-info").textContent =
+      `${session.symbol} ${session.tf}  LIVE  @ ${new Date(candle.time * 1000).toISOString().slice(0, 16).replace("T", " ")}  price ${candle.close.toFixed(4)}`;
+    $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
+    // when the kline closes, tell the backend so indicator endpoints can extend
+    // their per-candle aggregations
+    if (k.x === true && candle.time !== liveLastKlineTime) {
+      liveLastKlineTime = candle.time;
+      // flush any pending ticks first so the new candle's data is buffered
+      // before the backend processes the close
+      await pushLiveTicks();
+      try {
+        await api(`/api/session/${session.id}/push_kline`, {
+          method: "POST", body: JSON.stringify(candle),
+        });
+        refreshActiveIndicators();
+      } catch (_) { /* non-fatal */ }
+    }
+  };
+
+  const handleLiveAggTrade = (a) => {
+    const tick = {
+      time_ms: a.T,
+      price: parseFloat(a.p),
+      qty: parseFloat(a.q),
+      side: a.m ? "sell" : "buy",
+    };
+    tapeBuffer.push(tick);
+    if (tapeBuffer.length > TAPE_CAP) tapeBuffer = tapeBuffer.slice(-TAPE_CAP);
+    renderTape();
+    // buffer for periodic push to backend (powers live indicators)
+    liveTickBuffer.push({
+      time_ms: a.T,
+      price: parseFloat(a.p),
+      qty: parseFloat(a.q),
+      is_buyer_maker: a.m,
+    });
+  };
+
+  const connectLiveStream = (sess) => {
+    closeLiveStream();
+    const base = sess.market === "futures"
+      ? "wss://fstream.binance.com"
+      : "wss://stream.binance.com:9443";
+    const sym = sess.symbol.toLowerCase();
+    const url = `${base}/stream?streams=${sym}@kline_${sess.tf}/${sym}@aggTrade`;
+    liveWs = new WebSocket(url);
+    startLivePush();
+    liveWs.onmessage = (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch (_) { return; }
+      const d = m.data || m;
+      if (!d || !d.e) return;
+      if (d.e === "kline" && d.k) handleLiveKline(d.k);
+      else if (d.e === "aggTrade") handleLiveAggTrade(d);
+    };
+    liveWs.onclose = (e) => {
+      // only auto-reconnect if still in live mode for this session
+      if (!session || !session.is_live) return;
+      setStatus("live stream disconnected — reconnecting…", true);
+      setTimeout(() => { if (session && session.is_live) connectLiveStream(session); }, 2000);
+    };
+    liveWs.onerror = () => setStatus("live stream error", true);
+  };
+
   // ---- Actions
   const loadSession = async () => {
     const fd = new FormData(setupForm);
-    const replayDate = parseDmy(fd.get("replay_date"));
-    if (!replayDate) { showFieldError($("#replay-date"), "use dd/mm/yyyy"); return; }
-    if (replayDate.getTime() >= Date.now()) {
-      showFieldError($("#replay-date"), "must be in the past"); return;
-    }
+    const mode = fd.get("mode") || "replay";
     const tf = fd.get("tf");
-    const warmup = parseInt(fd.get("warmup"), 10) || 100;
     const tfSec = TF_SECONDS[tf];
     if (!tfSec) { setStatus("unsupported tf", true); return; }
-
-    // fetch a little extra before the replay date so the chart has warmup candles
-    // visible behind the cursor (replay_ts tells the backend where to put the cursor)
-    const startMs = replayDate.getTime() - (warmup + 5) * tfSec * 1000;
-    const start = toIso(new Date(startMs));
-    const end = toIso(new Date(Math.min(Date.now(), replayDate.getTime() + 365 * 86400 * 1000)));
-    const replayTs = Math.floor(replayDate.getTime() / 1000);
 
     const body = {
       symbol: fd.get("symbol").trim().toUpperCase(),
       market: fd.get("market"),
-      tf, start, end, warmup,
-      replay_ts: replayTs,
+      tf,
+      warmup: parseInt(fd.get("warmup"), 10) || 100,
     };
 
-    // cancel any in-flight load so a quick re-submit isn't dropped
+    if (mode === "live") {
+      body.live = true;
+    } else {
+      const replayDate = parseDmy(fd.get("replay_date"));
+      if (!replayDate) { showFieldError($("#replay-date"), "use dd/mm/yyyy"); return; }
+      if (replayDate.getTime() >= Date.now()) {
+        showFieldError($("#replay-date"), "must be in the past"); return;
+      }
+      const startMs = replayDate.getTime() - (body.warmup + 5) * tfSec * 1000;
+      body.start = toIso(new Date(startMs));
+      body.end = toIso(new Date(Math.min(Date.now(), replayDate.getTime() + 365 * 86400 * 1000)));
+      body.replay_ts = Math.floor(replayDate.getTime() / 1000);
+    }
+
     if (loadAbort) loadAbort.abort();
     loadAbort = new AbortController();
     const signal = loadAbort.signal;
-    setStatus("loading…");
+    setStatus(mode === "live" ? "connecting…" : "loading…");
     try {
       resetForNewSession();
+      closeLiveStream();
       const data = await api("/api/session", {
         method: "POST", body: JSON.stringify(body), signal,
       });
       applySession(data, true);
-      setStatus(`loaded ${data.total} candles`);
+      if (data.is_live) {
+        connectLiveStream(data);
+        setStatus(`live · ${data.total} warmup candles`);
+      } else {
+        setStatus(`loaded ${data.total} candles`);
+      }
     } catch (err) {
-      if (err.name === "AbortError") return;  // superseded by a newer load
+      if (err.name === "AbortError") return;
       const msg = err.message;
       if (/symbol|invalid symbol/i.test(msg)) showFieldError(setupForm.symbol, "unknown symbol");
-      else if (/no candles/i.test(msg)) showFieldError($("#replay-date"), "no data for this range");
+      else if (/no candles|no recent candles/i.test(msg)) showFieldError(setupForm.symbol, "no data");
       else setStatus(msg, true);
     }
   };
@@ -1517,6 +1702,18 @@
   });
 
   // ---- Wire up
+  const modeSelect = $("#mode-select");
+  const refreshModeUI = () => {
+    const live = modeSelect.value === "live";
+    document.body.classList.toggle("live-mode", live);
+    $("#live-indicator").style.display = live ? "" : "none";
+  };
+  modeSelect.addEventListener("change", () => {
+    refreshModeUI();
+    if (modeSelect.value === "live") loadSession();    // auto-load on Live select
+  });
+  refreshModeUI();
+
   setupForm.addEventListener("submit", (e) => { e.preventDefault(); loadSession(); });
   $("#next-1").addEventListener("click", () => {
     const n = parseInt($("#step-n").value, 10) || 1;

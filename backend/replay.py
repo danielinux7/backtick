@@ -1,6 +1,7 @@
 """In-memory replay sessions: candles, cursor, trades, P&L."""
 from __future__ import annotations
 
+import datetime as dt
 import secrets
 from dataclasses import dataclass, field
 from threading import RLock
@@ -78,6 +79,10 @@ class Session:
     # many of those trades have already been revealed.
     tick_aggs: pd.DataFrame | None = None
     tick_idx: int = 0
+    is_live: bool = False
+    # live-mode buffer of aggTrades posted by the frontend WebSocket stream;
+    # each entry: {time_ms, price, qty, is_buyer_maker}
+    live_aggtrades: list[dict] = field(default_factory=list)
     # per-candle CVD stats; each value is
     #   {"delta": net signed qty, "max_rel": peak intra-candle cum, "min_rel": trough}
     # — recorded relative to the start of the candle so we can stitch a running
@@ -316,20 +321,40 @@ class SessionStore:
         self._sessions: dict[str, Session] = {}
         self._lock = RLock()
 
-    def create(self, symbol: str, market: str, tf: str, start: str, end: str,
-               warmup: int = 100, replay_ts: int | None = None) -> Session:
-        df = fetch_klines(symbol, tf, start, end, market=market)
-        if df.empty:
-            raise ValueError("no candles returned for that range")
-        if replay_ts is not None:
-            # cursor = first candle whose open time is >= the requested replay timestamp
-            idx = int(df["time"].searchsorted(replay_ts, side="left"))
-            cursor = max(0, min(idx, len(df) - 1))
+    def create(self, symbol: str, market: str, tf: str,
+               start: str | None = None, end: str | None = None,
+               warmup: int = 100, replay_ts: int | None = None,
+               live: bool = False) -> Session:
+        if live:
+            # pull recent klines as warmup context; the frontend takes over
+            # via Binance WS streams for live updates
+            tf_ms = TF_MS[tf]
+            now_ms = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)
+            span_ms = max((warmup + 5) * tf_ms, 2 * 86_400_000)   # always span ≥ 2 days
+            start_ms = now_ms - span_ms
+            start_iso = dt.datetime.fromtimestamp(start_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
+            end_iso = dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
+            df = fetch_klines(symbol, tf, start_iso, end_iso, market=market)
+            if df.empty:
+                raise ValueError("no recent candles for live session")
+            # keep only the most recent (warmup + 5) candles for a clean start
+            df = df.tail(warmup + 5).reset_index(drop=True)
+            cursor = len(df) - 1
         else:
-            cursor = max(0, min(warmup, len(df) - 1))
+            if start is None or end is None:
+                raise ValueError("start and end are required for replay sessions")
+            df = fetch_klines(symbol, tf, start, end, market=market)
+            if df.empty:
+                raise ValueError("no candles returned for that range")
+            if replay_ts is not None:
+                idx = int(df["time"].searchsorted(replay_ts, side="left"))
+                cursor = max(0, min(idx, len(df) - 1))
+            else:
+                cursor = max(0, min(warmup, len(df) - 1))
         sid = secrets.token_hex(6)
         sess = Session(id=sid, symbol=symbol.upper(), market=market, tf=tf,
-                       start=start, end=end, df=df, cursor=cursor)
+                       start=start or "", end=end or "",
+                       df=df, cursor=cursor, is_live=live)
         with self._lock:
             self._sessions[sid] = sess
         return sess
