@@ -4,6 +4,7 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -255,6 +256,54 @@ def close_trade(sid: str, tid: str) -> dict:
         else:
             raise HTTPException(404, "trade not found or already closed")
     return _serialize_session(sess)
+
+
+@app.get("/api/session/{sid}/vol_profile")
+def vol_profile(sid: str, from_ts: int, to_ts: int, buckets: int = 40) -> dict:
+    """Aggregate aggTrades inside [from_ts, to_ts] into a volume-by-price
+    histogram with taker-buy / taker-sell split per bucket."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    buckets = max(8, min(120, buckets))
+    try:
+        df = fetch_agg_trades(sess.symbol, from_ts * 1000, to_ts * 1000, sess.market)
+    except Exception as e:
+        raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
+    if df.empty:
+        return {"buckets": [], "max_vol": 0.0, "price_min": 0.0, "price_max": 0.0, "poc_idx": -1}
+    p_min = float(df["price"].min())
+    p_max = float(df["price"].max())
+    if p_max <= p_min:
+        return {"buckets": [], "max_vol": 0.0, "price_min": p_min, "price_max": p_max, "poc_idx": -1}
+    bucket_size = (p_max - p_min) / buckets
+    bin_idx = ((df["price"] - p_min) / bucket_size).astype("int64").clip(0, buckets - 1)
+    buy_qty = df["qty"].where(~df["is_buyer_maker"], 0.0)
+    sell_qty = df["qty"].where(df["is_buyer_maker"], 0.0)
+    grouped = pd.DataFrame({"bin": bin_idx, "buy": buy_qty, "sell": sell_qty}) \
+        .groupby("bin")[["buy", "sell"]].sum()
+    out = []
+    max_vol = 0.0
+    poc_idx = 0
+    for i in range(buckets):
+        if i in grouped.index:
+            b = float(grouped.loc[i, "buy"]); s = float(grouped.loc[i, "sell"])
+        else:
+            b = s = 0.0
+        total = b + s
+        if total > max_vol:
+            max_vol = total; poc_idx = i
+        out.append({
+            "price_low": p_min + i * bucket_size,
+            "price_high": p_min + (i + 1) * bucket_size,
+            "buy": b, "sell": s,
+        })
+    return {
+        "buckets": out, "max_vol": max_vol,
+        "price_min": p_min, "price_max": p_max,
+        "poc_idx": poc_idx,
+    }
 
 
 @app.get("/api/session/{sid}/cvd")

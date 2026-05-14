@@ -99,6 +99,7 @@
     try { rsiChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
     try { cvdChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
     _syncing = false;
+    scheduleVolProfileFetch();
   });
   const showRsi = (visible) => rsiEl.classList.toggle("visible", visible);
   const showCvd = (visible) => cvdEl.classList.toggle("visible", visible);
@@ -317,75 +318,58 @@
     return r.json();
   };
 
-  // ---- Volume profile (horizontal histogram of volume-by-price for the
-  // visible time window; POC highlighted in orange). Implemented as a
-  // primitive so it re-renders automatically when you scroll/zoom.
-  const VOLPROF_BUCKETS = 40;
-  const VOLPROF_WIDTH_FRACTION = 0.18;
-  const VOLPROF_FILL = "rgba(120, 144, 156, 0.38)";
-  const VOLPROF_POC  = "rgba(255, 183, 77, 0.55)";
+  // ---- Volume profile (aggTrade-bucketed, with buy/sell split per level)
+  // Backend computes the profile for the currently-visible time range; we
+  // debounce-fetch on visible-range changes, cache per range, and the primitive
+  // just draws from the cached data. POC bar is outlined.
+  const VOLPROF_WIDTH_FRACTION = 0.20;
+  const VOLPROF_BUY  = "rgba(38, 166, 154, 0.75)";
+  const VOLPROF_SELL = "rgba(239,  83,  80, 0.75)";
+  const VOLPROF_POC_OUTLINE = "rgba(255, 183, 77, 0.95)";
+
+  let volProfileData = null;        // { buckets, max_vol, price_min, price_max, poc_idx }
+  let volProfileLastKey = null;
+  let volProfileFetchTimer = null;
+  let volProfileAbort = null;
 
   const makeVolumeProfile = () => {
     let attached = null;
     const renderer = {
       draw(target) {
-        if (!attached || !session || !session.candles.length) return;
-        const ts = attached.chart.timeScale();
-        const range = ts.getVisibleLogicalRange();
-        if (!range) return;
-        const cs = session.candles;
-        const fromIdx = Math.max(0, Math.floor(range.from));
-        const toIdx = Math.min(cs.length - 1, Math.ceil(range.to));
-        if (toIdx < fromIdx) return;
-        let pMin = Infinity, pMax = -Infinity;
-        for (let i = fromIdx; i <= toIdx; i++) {
-          if (cs[i].low < pMin) pMin = cs[i].low;
-          if (cs[i].high > pMax) pMax = cs[i].high;
-        }
-        if (!isFinite(pMin) || !isFinite(pMax) || pMax <= pMin) return;
-        const bucketSize = (pMax - pMin) / VOLPROF_BUCKETS;
-        const buckets = new Array(VOLPROF_BUCKETS).fill(0);
-        for (let i = fromIdx; i <= toIdx; i++) {
-          const c = cs[i];
-          const span = c.high - c.low;
-          if (span <= 0) {
-            const b = Math.min(VOLPROF_BUCKETS - 1,
-              Math.max(0, Math.floor((c.close - pMin) / bucketSize)));
-            buckets[b] += c.volume;
-            continue;
-          }
-          // distribute the candle's volume evenly across the buckets it spans
-          const bStart = Math.max(0, Math.floor((c.low - pMin) / bucketSize));
-          const bEnd = Math.min(VOLPROF_BUCKETS - 1, Math.floor((c.high - pMin) / bucketSize));
-          const per = c.volume / (bEnd - bStart + 1);
-          for (let b = bStart; b <= bEnd; b++) buckets[b] += per;
-        }
-        let maxVol = 0, pocIdx = 0;
-        for (let i = 0; i < buckets.length; i++) {
-          if (buckets[i] > maxVol) { maxVol = buckets[i]; pocIdx = i; }
-        }
-        if (maxVol <= 0) return;
-
+        if (!attached || !volProfileData || !volProfileData.buckets.length) return;
+        const d = volProfileData;
+        if (d.max_vol <= 0) return;
         target.useBitmapCoordinateSpace((scope) => {
           const ctx = scope.context;
           const series = attached.series;
           const hpr = scope.horizontalPixelRatio;
           const vpr = scope.verticalPixelRatio;
           const profileMax = scope.mediaSize.width * VOLPROF_WIDTH_FRACTION;
-          for (let i = 0; i < VOLPROF_BUCKETS; i++) {
-            if (buckets[i] <= 0) continue;
-            const yTop = series.priceToCoordinate(pMin + (i + 1) * bucketSize);
-            const yBot = series.priceToCoordinate(pMin + i * bucketSize);
-            if (yTop == null || yBot == null) continue;
-            const w = (buckets[i] / maxVol) * profileMax;
-            const xLeft = scope.mediaSize.width - w;
-            ctx.fillStyle = i === pocIdx ? VOLPROF_POC : VOLPROF_FILL;
-            ctx.fillRect(
-              xLeft * hpr,
-              Math.min(yTop, yBot) * vpr,
-              w * hpr,
-              Math.max(1, Math.abs(yTop - yBot)) * vpr,
-            );
+          const xRight = scope.mediaSize.width;
+          for (let i = 0; i < d.buckets.length; i++) {
+            const b = d.buckets[i];
+            const total = b.buy + b.sell;
+            if (total <= 0) continue;
+            const yHi = series.priceToCoordinate(b.price_high);
+            const yLo = series.priceToCoordinate(b.price_low);
+            if (yHi == null || yLo == null) continue;
+            const totalW = (total / d.max_vol) * profileMax;
+            const buyW = (b.buy / d.max_vol) * profileMax;
+            const sellW = totalW - buyW;
+            const y = Math.min(yHi, yLo) * vpr;
+            const h = Math.max(1, Math.abs(yLo - yHi)) * vpr;
+            // buys on the chart-side, sells extending further left
+            const xBuyStart = (xRight - buyW) * hpr;
+            ctx.fillStyle = VOLPROF_BUY;
+            ctx.fillRect(xBuyStart, y, buyW * hpr, h);
+            const xSellStart = (xRight - buyW - sellW) * hpr;
+            ctx.fillStyle = VOLPROF_SELL;
+            ctx.fillRect(xSellStart, y, sellW * hpr, h);
+            if (i === d.poc_idx) {
+              ctx.strokeStyle = VOLPROF_POC_OUTLINE;
+              ctx.lineWidth = Math.max(1, Math.round(1 * hpr));
+              ctx.strokeRect(xSellStart, y, totalW * hpr, h);
+            }
           }
         });
       },
@@ -397,17 +381,60 @@
       paneViews() {
         return [{ zOrder: () => "normal", renderer: () => renderer }];
       },
+      requestRedraw() {
+        if (attached?.requestUpdate) attached.requestUpdate();
+      },
     };
   };
 
   let volumeProfile = null;
+
+  const fetchVolProfile = async () => {
+    if (!session || !volumeProfile) return;
+    const range = chart.timeScale().getVisibleLogicalRange();
+    if (!range) return;
+    const cs = session.candles;
+    if (!cs.length) return;
+    const fromIdx = Math.max(0, Math.floor(range.from));
+    const toIdx = Math.min(cs.length - 1, Math.ceil(range.to));
+    if (toIdx < fromIdx) return;
+    const tfSec = TF_SECONDS[session.tf];
+    const fromTs = cs[fromIdx].time;
+    const toTs = cs[toIdx].time + tfSec;
+    const key = `${fromTs}-${toTs}`;
+    if (key === volProfileLastKey) return;
+    volProfileLastKey = key;
+    if (volProfileAbort) volProfileAbort.abort();
+    volProfileAbort = new AbortController();
+    try {
+      const data = await api(
+        `/api/session/${session.id}/vol_profile?from_ts=${fromTs}&to_ts=${toTs}&buckets=40`,
+        { signal: volProfileAbort.signal },
+      );
+      volProfileData = data;
+      volumeProfile.requestRedraw();
+    } catch (err) {
+      if (err.name !== "AbortError") setStatus(`vol profile: ${err.message}`, true);
+    }
+  };
+
+  const scheduleVolProfileFetch = () => {
+    if (!volumeProfile) return;
+    if (volProfileFetchTimer) clearTimeout(volProfileFetchTimer);
+    volProfileFetchTimer = setTimeout(fetchVolProfile, 200);
+  };
+
   const setVolumeProfileVisible = (visible) => {
     if (visible && !volumeProfile) {
       volumeProfile = makeVolumeProfile();
       candleSeries.attachPrimitive(volumeProfile);
+      volProfileLastKey = null;
+      fetchVolProfile();
     } else if (!visible && volumeProfile) {
       candleSeries.detachPrimitive(volumeProfile);
       volumeProfile = null;
+      volProfileData = null;
+      volProfileLastKey = null;
     }
   };
 
