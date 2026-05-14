@@ -258,6 +258,56 @@ def close_trade(sid: str, tid: str) -> dict:
     return _serialize_session(sess)
 
 
+@app.get("/api/session/{sid}/footprint")
+def footprint(sid: str, from_ts: int, to_ts: int, levels: int = 10) -> dict:
+    """Per-candle buy/sell volume split by price level inside the candle. Used
+    by the footprint overlay — only meaningful when the chart is zoomed in far
+    enough that each candle has decent horizontal space."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    levels = max(4, min(40, levels))
+    try:
+        df = fetch_agg_trades(sess.symbol, from_ts * 1000, to_ts * 1000, sess.market)
+    except Exception as e:
+        raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
+    if df.empty:
+        return {"candles": []}
+    tf_ms = TF_MS[sess.tf]
+    # which candle does each trade belong to (open time, seconds)
+    candle_open = ((df["time_ms"].astype("int64") // tf_ms) * tf_ms) // 1000
+    df = df.assign(_co=candle_open)
+    out = []
+    for ct, group in df.groupby("_co"):
+        p_min = float(group["price"].min())
+        p_max = float(group["price"].max())
+        if p_max <= p_min:
+            continue
+        bucket = (p_max - p_min) / levels
+        bin_idx = ((group["price"] - p_min) / bucket).astype("int64").clip(0, levels - 1)
+        buy = group["qty"].where(~group["is_buyer_maker"], 0.0)
+        sell = group["qty"].where(group["is_buyer_maker"], 0.0)
+        agg = pd.DataFrame({"bin": bin_idx, "buy": buy, "sell": sell}) \
+            .groupby("bin")[["buy", "sell"]].sum()
+        lvls = []
+        for i in range(levels):
+            if i in agg.index:
+                b = float(agg.loc[i, "buy"]); s = float(agg.loc[i, "sell"])
+            else:
+                b = s = 0.0
+            if b == 0 and s == 0:
+                continue
+            lvls.append({
+                "price_low": p_min + i * bucket,
+                "price_high": p_min + (i + 1) * bucket,
+                "buy": b, "sell": s,
+            })
+        if lvls:
+            out.append({"time": int(ct), "levels": lvls})
+    return {"candles": out}
+
+
 @app.get("/api/session/{sid}/liquidations")
 def liquidations(sid: str, from_ts: int, to_ts: int,
                  percentile: float = 0.995, min_qty: float = 0.0) -> dict:

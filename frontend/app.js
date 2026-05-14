@@ -102,6 +102,7 @@
     _syncing = false;
     scheduleVolProfileFetch();
     scheduleLiqFetch();
+    scheduleFootprintFetch();
   });
   const showRsi = (visible) => rsiEl.classList.toggle("visible", visible);
   const showCvd = (visible) => cvdEl.classList.toggle("visible", visible);
@@ -240,6 +241,9 @@
     const wantCvd = !!document.querySelector('.ind[data-kind="cvd"]:checked');
     if (wantCvd) { showCvd(true); fetchCvd(); }
     else { showCvd(false); cvdSeries.setData([]); cvdLastCursor = null; }
+
+    const wantFootprint = !!document.querySelector('.ind[data-kind="footprint"]:checked');
+    setFootprintVisible(wantFootprint);
 
     const wantLiq = !!document.querySelector('.ind[data-kind="liq"]:checked');
     if (wantLiq !== liqEnabled) {
@@ -525,6 +529,161 @@
         candleSeries.attachPrimitive(p);
         tradeZones.set(id, p);
       }
+    }
+  };
+
+  // ---- Footprint overlay (per-candle volume-by-price, drawn behind candles)
+  const FP_BUY  = "rgba(38, 166, 154, 0.40)";
+  const FP_SELL = "rgba(239,  83,  80, 0.40)";
+  const FP_BUY_TEXT  = "#a7e0d4";
+  const FP_SELL_TEXT = "#ffb3ac";
+  const FP_MIN_CANDLE_WIDTH = 36;   // bars only — below this nothing is drawn
+  const FP_MIN_W_FOR_TEXT  = 70;    // numeric labels need more horizontal room
+  const FP_MIN_H_FOR_TEXT  = 12;    // and enough vertical room per level
+  const fmtVol = (v) => {
+    if (v < 1000) return Math.round(v).toString();
+    if (v < 1_000_000) return (v / 1000).toFixed(v < 10_000 ? 1 : 0) + "k";
+    return (v / 1_000_000).toFixed(1) + "M";
+  };
+
+  let footprintData = [];           // [{time, levels: [{price_low, price_high, buy, sell}]}]
+  let footprintLastKey = null;
+  let footprintAbort = null;
+  let footprintFetchTimer = null;
+  let footprintPrim = null;
+
+  const makeFootprint = () => {
+    let attached = null;
+    const renderer = {
+      draw(target) {
+        if (!attached || !footprintData.length || !session) return;
+        target.useBitmapCoordinateSpace((scope) => {
+          const ctx = scope.context;
+          const ts = attached.chart.timeScale();
+          const series = attached.series;
+          const tfSec = TF_SECONDS[session.tf];
+          const hpr = scope.horizontalPixelRatio;
+          const vpr = scope.verticalPixelRatio;
+          for (const c of footprintData) {
+            // x0 is the candle's CENTER (timeToCoordinate convention), not its
+            // left edge. The slot between adjacent candle centers is barSpacing.
+            const xCenter = ts.timeToCoordinate(c.time);
+            const xNext = ts.timeToCoordinate(c.time + tfSec);
+            if (xCenter == null || xNext == null) continue;
+            const slot = Math.abs(xNext - xCenter);
+            const bodyW = slot * 0.75;          // candle bodies are narrower than the slot
+            if (bodyW < FP_MIN_CANDLE_WIDTH) continue;
+            const bodyLeft = xCenter - bodyW / 2;
+            const bodyRight = xCenter + bodyW / 2;
+            const half = bodyW / 2;
+            // scale within-candle bars by the candle's own max level volume
+            let maxLvl = 0;
+            for (const l of c.levels) {
+              if (l.buy > maxLvl) maxLvl = l.buy;
+              if (l.sell > maxLvl) maxLvl = l.sell;
+            }
+            if (maxLvl <= 0) continue;
+            const showText = bodyW >= FP_MIN_W_FOR_TEXT;
+            if (showText) {
+              const fontPx = 10 * vpr;
+              ctx.font = `${fontPx}px ui-monospace, "SF Mono", Menlo, monospace`;
+              ctx.textBaseline = "middle";
+            }
+            for (const l of c.levels) {
+              const yHi = series.priceToCoordinate(l.price_high);
+              const yLo = series.priceToCoordinate(l.price_low);
+              if (yHi == null || yLo == null) continue;
+              const yMedia = Math.min(yHi, yLo);
+              const hMedia = Math.max(1, Math.abs(yLo - yHi));
+              const y = yMedia * vpr;
+              const h = hMedia * vpr;
+              if (l.buy > 0) {
+                const bw = (l.buy / maxLvl) * half;
+                ctx.fillStyle = FP_BUY;
+                ctx.fillRect(bodyLeft * hpr, y, bw * hpr, h);
+              }
+              if (l.sell > 0) {
+                const sw = (l.sell / maxLvl) * half;
+                ctx.fillStyle = FP_SELL;
+                ctx.fillRect((bodyRight - sw) * hpr, y, sw * hpr, h);
+              }
+              if (showText && hMedia >= FP_MIN_H_FOR_TEXT) {
+                const midY = y + h / 2;
+                const padX = 3 * hpr;
+                if (l.buy > 0) {
+                  ctx.textAlign = "left";
+                  ctx.fillStyle = FP_BUY_TEXT;
+                  ctx.fillText(fmtVol(l.buy), bodyLeft * hpr + padX, midY);
+                }
+                if (l.sell > 0) {
+                  ctx.textAlign = "right";
+                  ctx.fillStyle = FP_SELL_TEXT;
+                  ctx.fillText(fmtVol(l.sell), bodyRight * hpr - padX, midY);
+                }
+              }
+            }
+          }
+        });
+      },
+    };
+    return {
+      attached(params) { attached = params; },
+      detached() { attached = null; },
+      updateAllViews() {},
+      paneViews() {
+        // draw on top of the candle body so the bars + text are visible
+        return [{ zOrder: () => "top", renderer: () => renderer }];
+      },
+      requestRedraw() { if (attached?.requestUpdate) attached.requestUpdate(); },
+    };
+  };
+
+  const fetchFootprint = async () => {
+    if (!session || !footprintPrim) return;
+    const range = chart.timeScale().getVisibleLogicalRange();
+    if (!range) return;
+    const cs = session.candles;
+    if (!cs.length) return;
+    const fromIdx = Math.max(0, Math.floor(range.from));
+    const toIdx = Math.min(cs.length - 1, Math.ceil(range.to));
+    if (toIdx < fromIdx) return;
+    const tfSec = TF_SECONDS[session.tf];
+    const fromTs = cs[fromIdx].time;
+    const toTs = cs[toIdx].time + tfSec;
+    const key = `${fromTs}-${toTs}`;
+    if (key === footprintLastKey) return;
+    footprintLastKey = key;
+    if (footprintAbort) footprintAbort.abort();
+    footprintAbort = new AbortController();
+    try {
+      const data = await api(
+        `/api/session/${session.id}/footprint?from_ts=${fromTs}&to_ts=${toTs}&levels=10`,
+        { signal: footprintAbort.signal },
+      );
+      footprintData = data.candles || [];
+      footprintPrim.requestRedraw();
+    } catch (err) {
+      if (err.name !== "AbortError") setStatus(`footprint: ${err.message}`, true);
+    }
+  };
+
+  const scheduleFootprintFetch = () => {
+    if (!footprintPrim) return;
+    if (footprintFetchTimer) clearTimeout(footprintFetchTimer);
+    footprintFetchTimer = setTimeout(fetchFootprint, 200);
+  };
+
+  const setFootprintVisible = (visible) => {
+    if (visible && !footprintPrim) {
+      footprintPrim = makeFootprint();
+      candleSeries.attachPrimitive(footprintPrim);
+      footprintLastKey = null;
+      fetchFootprint();
+    } else if (!visible && footprintPrim) {
+      candleSeries.detachPrimitive(footprintPrim);
+      footprintPrim = null;
+      footprintData = [];
+      footprintLastKey = null;
     }
   };
 
@@ -865,6 +1024,7 @@
     for (const p of tradeZones.values()) candleSeries.detachPrimitive(p);
     tradeZones.clear();
     setVolumeProfileVisible(false);
+    setFootprintVisible(false);
     liquidationMarkers.setMarkers([]); liqEvents = []; liqLastKey = null;
     cvdSeries.setData([]); showCvd(false); cvdLastCursor = null;
     tapeLastCursorTime = null;
