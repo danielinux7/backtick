@@ -45,12 +45,21 @@
         <div class="controls-left">
           <label>Step <input type="number" id="step-n" value="1" min="1" max="500" /></label>
           <label>Speed <select id="speed">
-            <option value="1000">1x (1s)</option>
-            <option value="500">2x</option>
-            <option value="250">4x</option>
-            <option value="100">10x</option>
-            <option value="50">20x</option>
-            <option value="tick">Tick by tick</option>
+            <optgroup label="Candle">
+              <option value="1000">1x (1s)</option>
+              <option value="500">2x</option>
+              <option value="250">4x</option>
+              <option value="100">10x</option>
+              <option value="50">20x</option>
+            </optgroup>
+            <optgroup label="Tick (real-time)">
+              <option value="tick:1">Tick · 1x</option>
+              <option value="tick:2">Tick · 2x</option>
+              <option value="tick:4">Tick · 4x</option>
+              <option value="tick:10">Tick · 10x</option>
+              <option value="tick:50">Tick · 50x</option>
+              <option value="tick:200">Tick · 200x</option>
+            </optgroup>
           </select></label>
         </div>
         <div class="controls-center">

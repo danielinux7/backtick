@@ -496,7 +496,7 @@
       list.appendChild(row);
     }
     const speed = $("#speed").value;
-    if (speed === "tick") {
+    if (speed.startsWith("tick:")) {
       $("#tape-status").textContent = `${tapeBuffer.length} prints · tick replay · large = top 5%`;
     } else {
       const tfSec = TF_SECONDS[session.tf];
@@ -508,17 +508,42 @@
   };
 
   const appendTicks = (ticks) => {
-    if (!ticks || !ticks.length) return;
+    if (!ticks || !ticks.length || !session) return;
     tapeBuffer.push(...ticks);
     if (tapeBuffer.length > TAPE_CAP) {
       tapeBuffer = tapeBuffer.slice(-TAPE_CAP);
+    }
+    // grow the chart's partial candle from these newly-revealed prints; on a
+    // candle boundary, freeze the previous candle to its real kline OHLC.
+    const tfSec = TF_SECONDS[session.tf];
+    const tfMs = tfSec * 1000;
+    for (const t of ticks) {
+      const co = Math.floor(t.time_ms / tfMs) * tfSec;
+      if (revealedForming.candleOpenSec !== co) {
+        if (revealedForming.candleOpenSec != null) {
+          const real = session.candles.find((c) => c.time === revealedForming.candleOpenSec);
+          if (real) candleSeries.update(real);
+        }
+        revealedForming = { candleOpenSec: co, ticks: [] };
+      }
+      revealedForming.ticks.push(t);
+    }
+    if (revealedForming.ticks.length) {
+      const prices = revealedForming.ticks.map((t) => t.price);
+      candleSeries.update({
+        time: revealedForming.candleOpenSec,
+        open: prices[0],
+        high: Math.max(...prices),
+        low: Math.min(...prices),
+        close: prices[prices.length - 1],
+      });
     }
     renderTape();
   };
 
   const fetchTape = async () => {
     if (!session) return;
-    if ($("#speed").value === "tick") return;   // tick mode handles its own tape
+    if ($("#speed").value.startsWith("tick:")) return;  // tick mode owns its tape
     if (tapeLastCursorTime === session.current_time) return;
     tapeLastCursorTime = session.current_time;
     if (tapeAbort) tapeAbort.abort();
@@ -636,7 +661,8 @@
 
   const applySession = (data, isNew = false) => {
     session = data;
-    candleSeries.setData(session.candles);
+    if (!isNew && session.in_tick) renderTickChart();
+    else candleSeries.setData(session.candles);
     renderIndicators();
     renderTrades();
     fetchTape();
@@ -674,6 +700,7 @@
     setVolumeProfileVisible(false);
     tapeLastCursorTime = null;
     tapeBuffer = [];
+    resetTickReplay();
     $("#tape-list").innerHTML = "";
     $("#tape-status").textContent = "";
     for (const lines of tradePriceLines.values()) {
@@ -751,20 +778,134 @@
     } catch (err) { setStatus(err.message, true); stopPlay(); }
   };
 
-  // tick-mode stepping — reveals n raw aggTrades, accumulates them into the
-  // tape, and lets the chart's partial candle update as ticks come in.
-  const TICK_BATCH = 20;     // trades per tick step
-  const TICK_INTERVAL_MS = 60;
-  const tickStep = async () => {
+  // ---- Tick-by-tick replay engine
+  // Pre-fetches aggTrades into a queue, then a requestAnimationFrame loop
+  // advances a simulated clock at (real Δt × tickSpeed) and reveals only ticks
+  // whose timestamps are due. So 1x ≈ real time; 2x is twice as fast; etc.
+  let tickQueue = [];          // pending {time_ms, price, qty, side} from backend
+  let simClockMs = null;       // simulated wall clock (ms since epoch)
+  let tickSpeed = 1;
+  let tickRAF = null;
+  let tickLastFrame = null;
+  let tickFetching = false;
+  let tickAtEnd = false;
+  // chart's view of the forming candle is built from REVEALED ticks only
+  // (not the pre-fetched batch), so the candle moves in lockstep with the tape
+  let revealedForming = { candleOpenSec: null, ticks: [] };
+  const resetRevealedForming = () => { revealedForming = { candleOpenSec: null, ticks: [] }; };
+
+  const TICK_PREFETCH = 80;
+  const TICK_REFILL_AT = 40;
+
+  const tickPrefetch = async () => {
+    if (tickFetching || tickAtEnd || !session) return;
+    tickFetching = true;
+    try {
+      const data = await api(`/api/session/${session.id}/tick_step`, {
+        method: "POST", body: JSON.stringify({ n: TICK_PREFETCH }),
+      });
+      if (data.new_ticks && data.new_ticks.length) {
+        tickQueue.push(...data.new_ticks);
+      }
+      // applySession will update the chart's partial candle to the latest
+      // state — slightly ahead of the tape reveal, but only by ~80 ticks
+      applySession(data, false);
+      if (data.at_end) tickAtEnd = true;
+    } catch (err) {
+      setStatus(err.message, true);
+      stopPlay();
+    } finally {
+      tickFetching = false;
+    }
+  };
+
+  const tickFrame = (now) => {
+    if (tickLastFrame === null) tickLastFrame = now;
+    const dtReal = now - tickLastFrame;
+    tickLastFrame = now;
+
+    if (simClockMs === null && tickQueue.length > 0) {
+      // align the clock to just before the first pending tick so it reveals
+      // promptly without an artificial wait
+      simClockMs = tickQueue[0].time_ms - 1;
+    }
+    if (simClockMs !== null) simClockMs += dtReal * tickSpeed;
+
+    // reveal eligible ticks
+    let revealed = null;
+    while (tickQueue.length > 0 && tickQueue[0].time_ms <= simClockMs) {
+      (revealed ||= []).push(tickQueue.shift());
+    }
+    if (revealed) appendTicks(revealed);
+
+    if (tickQueue.length < TICK_REFILL_AT && !tickFetching && !tickAtEnd) {
+      tickPrefetch();
+    }
+
+    if (tickAtEnd && tickQueue.length === 0 && !tickFetching) {
+      stopPlay();
+      return;
+    }
+    tickRAF = requestAnimationFrame(tickFrame);
+  };
+
+  const tickStartPlay = (speed) => {
+    tickSpeed = speed;
+    tickLastFrame = null;
+    tickAtEnd = false;
+    if (tickQueue.length < TICK_PREFETCH) tickPrefetch();
+    tickRAF = requestAnimationFrame(tickFrame);
+  };
+  const tickStopPlay = () => {
+    if (tickRAF) cancelAnimationFrame(tickRAF);
+    tickRAF = null;
+    tickLastFrame = null;
+  };
+  const resetTickReplay = () => {
+    tickQueue = [];
+    simClockMs = null;
+    tickAtEnd = false;
+    resetRevealedForming();
+  };
+
+  // build chart data from completed klines up to (but not including) the candle
+  // we're currently revealing tick-by-tick, then append our own partial OHLC
+  // built from revealed ticks. Called on prefetch so the chart "stays behind"
+  // the backend's lookahead.
+  const renderTickChart = () => {
+    if (!session) return;
+    const formingOpen = revealedForming.candleOpenSec;
+    let chartData;
+    if (formingOpen != null) {
+      chartData = session.candles.filter((c) => c.time < formingOpen);
+      if (revealedForming.ticks.length) {
+        const prices = revealedForming.ticks.map((t) => t.price);
+        chartData.push({
+          time: formingOpen,
+          open: prices[0],
+          high: Math.max(...prices),
+          low: Math.min(...prices),
+          close: prices[prices.length - 1],
+        });
+      }
+    } else {
+      chartData = session.in_tick ? session.candles.slice(0, -1) : session.candles;
+    }
+    candleSeries.setData(chartData);
+  };
+
+  // manual one-step in tick mode (Next button) — reveal n ticks immediately,
+  // bypassing the simulated clock
+  const tickNext = async (n) => {
     if (!session) return;
     try {
       const data = await api(`/api/session/${session.id}/tick_step`, {
-        method: "POST", body: JSON.stringify({ n: TICK_BATCH }),
+        method: "POST", body: JSON.stringify({ n }),
       });
-      applySession(data);
-      appendTicks(data.new_ticks);
-      if (data.at_end) stopPlay();
-    } catch (err) { setStatus(err.message, true); stopPlay(); }
+      applySession(data, false);
+      if (data.new_ticks) appendTicks(data.new_ticks);
+      if (data.at_end) tickAtEnd = true;
+    } catch (err) { setStatus(err.message, true); }
   };
   const backN = async (n) => {
     if (!session) return;
@@ -772,6 +913,9 @@
       const data = await api(`/api/session/${session.id}/back`, {
         method: "POST", body: JSON.stringify({ n }),
       });
+      // backend resets tick state on rewind — drop our local queue so we don't
+      // try to reveal ticks from candles that no longer exist on the cursor.
+      resetTickReplay();
       applySession(data);
     } catch (err) { setStatus(err.message, true); }
   };
@@ -841,12 +985,16 @@
     } catch (err) { setStatus(err.message, true); }
   };
 
+  const isTickSpeed = () => $("#speed").value.startsWith("tick:");
+  const tickSpeedFor = () => parseFloat($("#speed").value.slice(5));
+  const isPlaying = () => !!(playTimer || tickRAF);
+
   const startPlay = () => {
-    if (playTimer || !session) return;
+    if (playTimer || tickRAF || !session) return;
     if (session.cursor >= session.total - 1 && !session.in_tick) return;
     $("#play").textContent = "Pause";
-    if ($("#speed").value === "tick") {
-      playTimer = setInterval(tickStep, TICK_INTERVAL_MS);
+    if (isTickSpeed()) {
+      tickStartPlay(tickSpeedFor());
     } else {
       const speed = parseInt($("#speed").value, 10);
       playTimer = setInterval(() => stepN(parseInt($("#step-n").value, 10) || 1), speed);
@@ -854,6 +1002,7 @@
   };
   const stopPlay = () => {
     if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    tickStopPlay();
     $("#play").textContent = "Play";
   };
 
@@ -1041,15 +1190,27 @@
   // ---- Wire up
   setupForm.addEventListener("submit", (e) => { e.preventDefault(); loadSession(); });
   $("#next-1").addEventListener("click", () => {
-    if ($("#speed").value === "tick") tickStep();
-    else stepN(parseInt($("#step-n").value, 10) || 1);
+    const n = parseInt($("#step-n").value, 10) || 1;
+    if (isTickSpeed()) tickNext(n);
+    else stepN(n);
   });
   $("#back-1").addEventListener("click", () => backN(parseInt($("#step-n").value, 10) || 1));
-  $("#play").addEventListener("click", () => (playTimer ? stopPlay() : startPlay()));
+  $("#play").addEventListener("click", () => (isPlaying() ? stopPlay() : startPlay()));
   $("#long-btn").addEventListener("click", () => placeTrade("long"));
   $("#short-btn").addEventListener("click", () => placeTrade("short"));
   document.querySelectorAll(".ind").forEach((el) => el.addEventListener("change", renderIndicators));
-  $("#speed").addEventListener("change", () => { if (playTimer) { stopPlay(); startPlay(); } });
+  // Track previous mode so we can drop the pending tick queue when leaving
+  // tick mode (those ticks would no longer match where the cursor will be).
+  let _prevSpeedTick = isTickSpeed();
+  $("#speed").addEventListener("change", () => {
+    const wasPlaying = !!(playTimer || tickRAF);
+    if (wasPlaying) stopPlay();
+    const nowTick = isTickSpeed();
+    if (_prevSpeedTick && !nowTick) resetTickReplay();
+    _prevSpeedTick = nowTick;
+    if (wasPlaying) startPlay();
+    else if (nowTick) tickSpeed = tickSpeedFor();   // record speed for next Play
+  });
   $("#t-type").addEventListener("change", (e) => {
     const isLimit = e.target.value === "limit";
     $("#limit-row").style.display = isLimit ? "" : "none";
@@ -1099,7 +1260,7 @@
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     if (e.key === "ArrowRight") { e.preventDefault(); stepN(parseInt($("#step-n").value, 10) || 1); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); backN(parseInt($("#step-n").value, 10) || 1); }
-    else if (e.key === " ") { e.preventDefault(); playTimer ? stopPlay() : startPlay(); }
+    else if (e.key === " ") { e.preventDefault(); isPlaying() ? stopPlay() : startPlay(); }
     else if (e.key.toLowerCase() === "l") placeTrade("long");
     else if (e.key.toLowerCase() === "s") placeTrade("short");
     else if (e.key.toLowerCase() === "h") armFor("hline");
