@@ -38,12 +38,16 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 #rsi-chart { height: 0; transition: height 0.2s; }
 #rsi-chart.visible { height: 160px; border-top: 1px solid #1e222d; }
 
-.controls { display: flex; gap: 8px; align-items: center; padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; flex-wrap: wrap; flex-shrink: 0; }
-.controls button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 10px; cursor: pointer; }
+.controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; flex-shrink: 0; }
+.controls-left { display: flex; gap: 8px; align-items: center; justify-self: start; }
+.controls-center { display: flex; gap: 8px; align-items: center; justify-self: center; }
+.controls-right { display: flex; gap: 8px; align-items: center; justify-self: end; min-width: 0; }
+.controls button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
+.controls-center button { min-width: 64px; }
 .controls button:hover:not(:disabled) { background: #2a2e39; }
 .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 .controls input, .controls select { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 2px 6px; }
-#cursor-info { margin-left: auto; font-size: 12px; color: #999; }
+#cursor-info { font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .indicators { padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; font-size: 12px; display: flex; gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
 .indicators label { cursor: pointer; }
@@ -69,16 +73,17 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .pick.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
 
 .trades-panel { flex: 1; overflow: auto; }
-#trades-table { width: 100%; font-size: 11px; border-collapse: collapse; }
-#trades-table th { text-align: left; padding: 4px; color: #777; border-bottom: 1px solid #1e222d; }
-#trades-table td { padding: 4px; border-bottom: 1px solid #181b24; }
-#trades-table .pnl-pos { color: #26a69a; }
-#trades-table .pnl-neg { color: #ef5350; }
-#trades-table .closed { opacity: 0.55; }
-#trades-table button { background: #2a2e39; color: #d1d4dc; border: none; border-radius: 3px; padding: 2px 6px; cursor: pointer; font-size: 10px; }
-.totals { font-size: 12px; padding: 4px 0; color: #d1d4dc; }
-.totals span { margin-right: 12px; }
-#mark-info { font-size: 12px; color: #999; }
+#trades-table { width: 100%; font-size: 13px; border-collapse: collapse; }
+#trades-table th { text-align: left; padding: 6px 4px; color: #aaa; border-bottom: 1px solid #2a2e39; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+#trades-table td { padding: 6px 4px; border-bottom: 1px solid #1e222d; }
+#trades-table .pnl-pos { color: #4dd0c1; font-weight: 600; }
+#trades-table .pnl-neg { color: #ff7d75; font-weight: 600; }
+#trades-table .closed { opacity: 0.7; }
+#trades-table button { background: #2a2e39; color: #d1d4dc; border: none; border-radius: 3px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+.totals { font-size: 13px; padding: 8px 0; color: #d1d4dc; line-height: 1.7; border-bottom: 1px solid #1e222d; margin-bottom: 6px; }
+.totals span { margin-right: 14px; display: inline-block; }
+.totals b { font-size: 15px; }
+#mark-info { font-size: 13px; color: #d1d4dc; font-weight: 600; }
 
 .field-error {
   position: absolute;

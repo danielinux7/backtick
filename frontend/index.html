@@ -6,7 +6,7 @@
   <link rel="stylesheet" href="/static/style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/themes/dark.css" />
-  <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
 </head>
 <body>
@@ -42,18 +42,24 @@
         <div id="arm-hint" class="arm-hint" style="display:none"></div>
       </div>
       <div class="controls">
-        <button id="back-1" disabled>&laquo;</button>
-        <button id="play" disabled>Play</button>
-        <button id="next-1" disabled>Next</button>
-        <label>Step <input type="number" id="step-n" value="1" min="1" max="500" /></label>
-        <label>Speed <select id="speed">
-          <option value="1000">1x (1s)</option>
-          <option value="500">2x</option>
-          <option value="250">4x</option>
-          <option value="100">10x</option>
-          <option value="50">20x</option>
-        </select></label>
-        <span id="cursor-info"></span>
+        <div class="controls-left">
+          <label>Step <input type="number" id="step-n" value="1" min="1" max="500" /></label>
+          <label>Speed <select id="speed">
+            <option value="1000">1x (1s)</option>
+            <option value="500">2x</option>
+            <option value="250">4x</option>
+            <option value="100">10x</option>
+            <option value="50">20x</option>
+          </select></label>
+        </div>
+        <div class="controls-center">
+          <button id="back-1" disabled>Previous</button>
+          <button id="play" disabled>Play</button>
+          <button id="next-1" disabled>Next</button>
+        </div>
+        <div class="controls-right">
+          <span id="cursor-info"></span>
+        </div>
       </div>
 
       <div class="indicators">

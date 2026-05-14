@@ -89,51 +89,72 @@ class Session:
         return int(self.df["time"].iloc[self.cursor])
 
     def process_candle(self) -> list[Trade]:
-        """Fill pending limits, then trigger SL/TP. Returns trades whose state changed."""
+        """Fill pending limits, then trigger SL/TP. Returns trades whose state changed.
+
+        - Limit fills use the candle open if it gapped past the limit (realistic gap fill).
+        - SL/TP also gap-fill at the open when the candle opens past the trigger.
+        - A trade that just filled this candle is *not* eligible for SL/TP this same
+          candle: we can't know the intra-candle order of price moves, so claiming
+          a same-bar TP/SL hit is unreliable. Eligibility resumes next candle.
+        """
         if self.cursor < 0:
             return []
         row = self.df.iloc[self.cursor]
+        op, hi, lo = float(row.open), float(row.high), float(row.low)
+        rt = int(row.time)
         changed: list[Trade] = []
 
         # 1) fill pending limit orders
+        just_filled: set[str] = set()
         for t in self.trades:
-            if t.status != "pending":
+            if t.status != "pending" or t.limit_price is None:
                 continue
-            if t.limit_price is None:
-                continue
-            filled = False
-            if t.side == "long" and row.low <= t.limit_price:
-                filled = True
-            elif t.side == "short" and row.high >= t.limit_price:
-                filled = True
-            if filled:
+            entry: float | None = None
+            if t.side == "long":
+                if op <= t.limit_price:
+                    entry = op                    # gap-down through the limit
+                elif lo <= t.limit_price:
+                    entry = t.limit_price         # intra-candle touch
+            else:
+                if op >= t.limit_price:
+                    entry = op                    # gap-up through the limit
+                elif hi >= t.limit_price:
+                    entry = t.limit_price
+            if entry is not None:
                 t.status = "open"
-                t.entry_time = int(row.time)
-                t.entry_price = t.limit_price
+                t.entry_time = rt
+                t.entry_price = entry
+                just_filled.add(t.id)
                 changed.append(t)
 
-        # 2) check SL/TP on open trades — only when SL is set
-        # (if user didn't commit to a stop, the trade stays open until manual close)
+        # 2) SL/TP on open trades — only when SL is set, and never on the same
+        # candle that filled the trade.
         for t in self.trades:
-            if t.status != "open":
-                continue
-            if t.sl is None:
+            if t.status != "open" or t.sl is None or t.id in just_filled:
                 continue
             hit_price: float | None = None
             reason: str | None = None
             if t.side == "long":
-                if row.low <= t.sl:
+                if op <= t.sl:
+                    hit_price, reason = op, "sl"          # gap-down past SL
+                elif t.tp is not None and op >= t.tp:
+                    hit_price, reason = op, "tp"          # gap-up past TP
+                elif lo <= t.sl:
                     hit_price, reason = t.sl, "sl"
-                elif t.tp is not None and row.high >= t.tp:
+                elif t.tp is not None and hi >= t.tp:
                     hit_price, reason = t.tp, "tp"
             else:
-                if row.high >= t.sl:
+                if op >= t.sl:
+                    hit_price, reason = op, "sl"          # gap-up past SL
+                elif t.tp is not None and op <= t.tp:
+                    hit_price, reason = op, "tp"          # gap-down past TP
+                elif hi >= t.sl:
                     hit_price, reason = t.sl, "sl"
-                elif t.tp is not None and row.low <= t.tp:
+                elif t.tp is not None and lo <= t.tp:
                     hit_price, reason = t.tp, "tp"
             if hit_price is not None:
                 t.status = "closed"
-                t.exit_time = int(row.time)
+                t.exit_time = rt
                 t.exit_price = hit_price
                 t.exit_reason = reason
                 changed.append(t)

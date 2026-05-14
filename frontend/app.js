@@ -45,12 +45,16 @@
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#2a2e39" },
     rightPriceScale: { borderColor: "#2a2e39" },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    // disable plain-wheel zoom — we route Ctrl+Wheel through our own handler
+    handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: true },
+    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
   });
-  const candleSeries = chart.addCandlestickSeries({
+  const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
     upColor: "#26a69a", downColor: "#ef5350",
     borderUpColor: "#26a69a", borderDownColor: "#ef5350",
     wickUpColor: "#26a69a", wickDownColor: "#ef5350",
   });
+  const candleMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
 
   const rsiChart = LightweightCharts.createChart(rsiEl, {
     autoSize: true,
@@ -58,8 +62,10 @@
     grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
     timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#2a2e39", visible: false },
     rightPriceScale: { borderColor: "#2a2e39" },
+    handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: true },
+    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
   });
-  const rsiSeries = rsiChart.addLineSeries({ color: "#bb86fc", lineWidth: 1 });
+  const rsiSeries = rsiChart.addSeries(LightweightCharts.LineSeries, { color: "#bb86fc", lineWidth: 1 });
   let _syncing = false;
   chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
     if (!r || _syncing) return;
@@ -69,6 +75,64 @@
   });
   const showRsi = (visible) => rsiEl.classList.toggle("visible", visible);
   showRsi(false);
+
+  // ---- Ctrl+Wheel zoom with locked price/bar ratio (TradingView-style)
+  // Plain wheel is a no-op; Ctrl/Cmd+Wheel zooms time and price together,
+  // anchored on the mouse, so candle shape stays constant across zoom levels.
+  // Press R to reset back to autoScale on price.
+  let lockedRatio = null;   // dollars per bar — captured on first zoom
+  const priceScale = chart.priceScale("right");
+
+  const resetZoomLock = () => {
+    lockedRatio = null;
+    priceScale.applyOptions({ autoScale: true });
+  };
+
+  const wheelZoom = (e) => {
+    e.preventDefault();
+    const ts = chart.timeScale();
+    const tr = ts.getVisibleLogicalRange();
+    if (!tr) return;
+    const factor = e.deltaY < 0 ? 0.85 : 1.18;
+    const rect = chartEl.getBoundingClientRect();
+    const relX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const relY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const tSpan = tr.to - tr.from;
+    const tAnchor = tr.from + tSpan * relX;
+    const newTSpan = Math.max(2, tSpan * factor);
+    const newTimeRange = {
+      from: tAnchor - newTSpan * relX,
+      to: tAnchor + newTSpan * (1 - relX),
+    };
+
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd + wheel — ratio-locked zoom (price scales with time)
+      if (lockedRatio === null) {
+        const pr = priceScale.getVisibleRange();
+        if (!pr) return;
+        const bars = tr.to - tr.from;
+        lockedRatio = bars > 0 ? (pr.to - pr.from) / bars : null;
+        if (!lockedRatio) return;
+        priceScale.applyOptions({ autoScale: false });
+      }
+      const pr = priceScale.getVisibleRange();
+      if (!pr) return;
+      ts.setVisibleLogicalRange(newTimeRange);
+      const pSpan = pr.to - pr.from;
+      const pAnchor = pr.to - relY * pSpan;     // chart y is inverted
+      const newPSpan = newTSpan * lockedRatio;
+      priceScale.setVisibleRange({
+        from: pAnchor - newPSpan * (1 - relY),
+        to: pAnchor + newPSpan * relY,
+      });
+    } else {
+      // plain wheel — time-only zoom; release any prior ratio lock
+      if (lockedRatio !== null) resetZoomLock();
+      ts.setVisibleLogicalRange(newTimeRange);
+    }
+  };
+  chartEl.addEventListener("wheel", wheelZoom, { passive: false });
+  rsiEl.addEventListener("wheel", wheelZoom, { passive: false });
 
   const emaSeries = {};
   const tradePriceLines = new Map();
@@ -127,7 +191,7 @@
     }
     for (const p of wantEmaPeriods) {
       if (!emaSeries[p]) {
-        emaSeries[p] = chart.addLineSeries({
+        emaSeries[p] = chart.addSeries(LightweightCharts.LineSeries, {
           color: colorFor(`ema_${p}`), lineWidth: 1,
           priceLineVisible: false, lastValueVisible: false,
         });
@@ -232,7 +296,7 @@
       }
     }
     markers.sort((a, b) => a.time - b.time);
-    candleSeries.setMarkers(markers);
+    candleMarkers.setMarkers(markers);
 
     for (const lines of tradePriceLines.values()) {
       for (const line of lines) candleSeries.removePriceLine(line);
@@ -322,7 +386,7 @@
 
     if (isNew) {
       // re-enable auto-scale on the price axis so it follows the new data's price range
-      chart.priceScale("right").applyOptions({ autoScale: true });
+      resetZoomLock();
       rsiChart.priceScale("right").applyOptions({ autoScale: true });
       // defer one frame so the chart has rendered the new data before we set the range
       requestAnimationFrame(() => {
@@ -338,7 +402,7 @@
     disarm();
     clearAllDrawings();
     candleSeries.setData([]);
-    candleSeries.setMarkers([]);
+    candleMarkers.setMarkers([]);
     for (const lines of tradePriceLines.values()) {
       for (const line of lines) candleSeries.removePriceLine(line);
     }
@@ -425,6 +489,9 @@
 
   const placeTrade = async (side) => {
     if (!session) return;
+    // pause autoplay so the cursor can't advance between the user's click
+    // and the request reaching the backend (would record a one-bar-late entry)
+    if (playTimer) stopPlay();
     const qtyInput = $("#t-qty");
     const qty = parseFloat(qtyInput.value);
     if (!(qty > 0)) { showFieldError(qtyInput, "qty must be > 0"); return; }
@@ -478,6 +545,7 @@
 
   const closeTrade = async (tid) => {
     if (!session) return;
+    if (playTimer) stopPlay();    // same race-avoidance as placeTrade
     try {
       const data = await api(`/api/session/${session.id}/trade/${tid}/close`, { method: "POST" });
       applySession(data);
@@ -600,7 +668,7 @@
     const b = second;
     if (!a || !b) return;
     const [s, e] = a.time <= b.time ? [a, b] : [b, a];
-    measureSeries = chart.addLineSeries({
+    measureSeries = chart.addSeries(LightweightCharts.LineSeries, {
       color: "#ffb74d", lineWidth: 2, lineStyle: 1,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
     });
@@ -733,6 +801,7 @@
     else if (e.key.toLowerCase() === "s") placeTrade("short");
     else if (e.key.toLowerCase() === "h") armFor("hline");
     else if (e.key.toLowerCase() === "m") { clearMeasure(); armFor("measure"); }
+    else if (e.key.toLowerCase() === "r") { resetZoomLock(); setStatus("zoom reset"); }
   });
 
   loadSession();
