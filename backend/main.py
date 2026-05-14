@@ -52,6 +52,8 @@ class TradeReq(BaseModel):
     limit_price: float | None = None
     sl: float | None = None
     tp: float | None = None
+    at_price: float | None = None      # live mode: explicit reference price for market entry
+    at_time: int | None = None         # live mode: unix-seconds timestamp for entry/created time
 
 
 def _get_agg_trades(sess, start_ms: int, end_ms: int) -> pd.DataFrame:
@@ -213,7 +215,9 @@ def place_trade(sid: str, req: TradeReq) -> dict:
     except KeyError:
         raise HTTPException(404, "session not found")
     with sess.lock:
-        mark = sess.current_price()
+        # in live mode the chart's "now" price is owned by the frontend WS feed,
+        # so honor at_price if it was supplied
+        mark = float(req.at_price) if req.at_price is not None else sess.current_price()
 
         if req.order_type == "limit":
             if req.limit_price is None or req.limit_price <= 0:
@@ -238,19 +242,23 @@ def place_trade(sid: str, req: TradeReq) -> dict:
             if req.tp is not None and req.tp >= ref_price:
                 raise HTTPException(400, "short TP must be below entry")
 
+        # in live mode the frontend supplies the actual "now" timestamp;
+        # sess.current_time() is the last completed kline's open, which is the
+        # PREVIOUS candle and would mis-place markers.
+        now_ts = int(req.at_time) if req.at_time is not None else sess.current_time()
         trade = Trade(
             id=secrets.token_hex(4),
             side=req.side,
             qty=req.qty,
             order_type=req.order_type,
-            created_time=sess.current_time(),
+            created_time=now_ts,
             sl=req.sl,
             tp=req.tp,
         )
         if req.order_type == "market":
             trade.status = "open"
-            trade.entry_time = sess.current_time()
-            trade.entry_price = mark
+            trade.entry_time = now_ts
+            trade.entry_price = mark        # uses at_price in live mode
         else:
             trade.status = "pending"
             trade.limit_price = req.limit_price
@@ -259,8 +267,13 @@ def place_trade(sid: str, req: TradeReq) -> dict:
     return _serialize_session(sess)
 
 
+class CloseTradeReq(BaseModel):
+    at_price: float | None = None
+    at_time: int | None = None
+
+
 @app.post("/api/session/{sid}/trade/{tid}/close")
-def close_trade(sid: str, tid: str) -> dict:
+def close_trade(sid: str, tid: str, req: CloseTradeReq = CloseTradeReq()) -> dict:
     try:
         sess = store.get(sid)
     except KeyError:
@@ -269,12 +282,11 @@ def close_trade(sid: str, tid: str) -> dict:
         for t in sess.trades:
             if t.id == tid and t.status in ("open", "pending"):
                 if t.status == "pending":
-                    # cancel the order
                     sess.trades = [x for x in sess.trades if x.id != tid]
                 else:
                     t.status = "closed"
-                    t.exit_time = sess.current_time()
-                    t.exit_price = sess.current_price()
+                    t.exit_time = int(req.at_time) if req.at_time is not None else sess.current_time()
+                    t.exit_price = float(req.at_price) if req.at_price is not None else sess.current_price()
                     t.exit_reason = "manual"
                 break
         else:
@@ -539,20 +551,30 @@ def push_ticks(sid: str, req: PushTicksReq) -> dict:
     except KeyError:
         raise HTTPException(404, "session not found")
     if not sess.is_live:
-        return {"buffered": 0}
+        return {"buffered": 0, "changed": []}
+    changed: list = []
+    seen: set[str] = set()
     with sess.lock:
         sess.live_aggtrades.extend(req.ticks)
-        # drop anything older than 24h to keep memory bounded
         cutoff = (sess.df["time"].iloc[0] * 1000) if len(sess.df) else 0
         if cutoff:
             sess.live_aggtrades = [t for t in sess.live_aggtrades
                                    if int(t["time_ms"]) >= cutoff]
-        # invalidate CVD cache for any candles those ticks touched
         tf_s = TF_MS[sess.tf] // 1000
+        # process each tick: invalidate CVD cache + run limit/SL/TP per tick
         for t in req.ticks:
-            candle_open = (int(t["time_ms"]) // (tf_s * 1000)) * tf_s
+            ms = int(t["time_ms"])
+            price = float(t["price"])
+            candle_open = (ms // (tf_s * 1000)) * tf_s
             sess.cvd_cache.pop(candle_open, None)
-    return {"buffered": len(sess.live_aggtrades)}
+            for c in sess._process_tick(price, ms):
+                if c.id not in seen:
+                    seen.add(c.id); changed.append(c)
+        mark = float(req.ticks[-1]["price"]) if req.ticks else sess.current_price()
+    return {
+        "buffered": len(sess.live_aggtrades),
+        "changed": [t.to_dict(mark) for t in changed],
+    }
 
 
 @app.post("/api/session/{sid}/push_kline")

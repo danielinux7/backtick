@@ -2,12 +2,25 @@
 html, body { margin: 0; padding: 0; height: 100%; background: #131722; color: #d1d4dc; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
 
 header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #0f1218; border-bottom: 1px solid #1e222d; flex-wrap: wrap; }
-.brand { font-weight: 700; letter-spacing: 0.5px; }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.4px; font-size: 14px; }
+.brand .logo { width: 24px; height: 24px; flex-shrink: 0; }
+.brand span { background: linear-gradient(120deg, #26a69a, #4dd0c1); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .setup { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .setup input, .setup select, .setup button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 8px; }
 .setup button { cursor: pointer; background: #2962ff; border-color: #2962ff; }
 .setup button:hover { background: #1d4ed8; }
-#status { font-size: 12px; color: #f7a; }
+#status {
+  position: fixed; bottom: 12px; right: 12px;
+  font-size: 11px; color: #d1d4dc;
+  background: rgba(15, 18, 24, 0.92);
+  border: 1px solid #2a2e39;
+  padding: 4px 10px; border-radius: 4px;
+  pointer-events: none; z-index: 1000;
+  max-width: 360px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+  opacity: 0; transition: opacity 0.15s;
+}
+#status:not(:empty) { opacity: 1; }
 .live-indicator { font-size: 11px; font-weight: 700; color: #81c784; letter-spacing: 0.5px;
   display: inline-flex; align-items: center; gap: 4px;
   animation: live-pulse 1.5s ease-in-out infinite; }
@@ -15,7 +28,8 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 /* hide replay-only controls in live mode */
 .live-mode .controls,
 .live-mode #replay-date,
-.live-mode input[name=warmup] { display: none !important; }
+.live-mode input[name=warmup],
+.live-mode .setup button[type=submit] { display: none !important; }
 
 main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
 

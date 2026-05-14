@@ -34,6 +34,16 @@
   const COLORS = ["#ffb74d", "#4fc3f7", "#aed581", "#f06292", "#ba68c8"];
   const INITIAL_VISIBLE_BARS = 80;
 
+  // all times shown to the user are in Asia/Amman (UTC+3, no DST)
+  const TZ = "Asia/Amman";
+  const _fmt = (opts) => new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour12: false, ...opts });
+  const _hm  = _fmt({ hour: "2-digit", minute: "2-digit" });
+  const _hms = _fmt({ hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const _ymdHm = _fmt({ year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const tzHm    = (sec) => _hm.format(new Date(sec * 1000));
+  const tzHmsMs = (ms)  => _hms.format(new Date(ms));
+  const tzYmdHm = (sec) => _ymdHm.format(new Date(sec * 1000)).replace(",", "");
+
   // ---- Chart setup
   const chartEl = $("#chart");
   const rsiEl = $("#rsi-chart");
@@ -43,9 +53,15 @@
     autoSize: true,
     layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
     grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
-    timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#2a2e39" },
+    timeScale: {
+      timeVisible: true, secondsVisible: false, borderColor: "#2a2e39",
+      // lightweight-charts treats `time` (unix seconds) as UTC by default;
+      // override formatters to render Amman wall-clock time on the axis
+      tickMarkFormatter: (time) => tzHm(time),
+    },
     rightPriceScale: { borderColor: "#2a2e39" },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    localization: { timeFormatter: (time) => tzYmdHm(time) },
     // disable plain-wheel zoom — we route Ctrl+Wheel through our own handler
     handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: true },
     handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
@@ -504,8 +520,8 @@
   // ---- Trade zone primitives (transparent green/red rectangles
   // entry→TP and entry→SL, persisting after the trade closes)
   const tradeZones = new Map();   // tradeId -> primitive
-  const ZONE_GREEN = "rgba(38, 166, 154, 0.14)";
-  const ZONE_RED   = "rgba(239,  83,  80, 0.14)";
+  const ZONE_GREEN = "rgba(38, 166, 154, 0.45)";
+  const ZONE_RED   = "rgba(239,  83,  80, 0.45)";
 
   const makeTradeZone = (tradeId) => {
     let attached = null;
@@ -514,20 +530,35 @@
         if (!attached || !session) return;
         const t = session.trades.find((x) => x.id === tradeId);
         if (!t || t.entry_time == null || t.entry_price == null) return;
+        const tfSec = TF_SECONDS[session.tf];
+        if (!tfSec) return;
+        // align both ends to candle open times so the zone spans whole candles —
+        // mid-candle entry/exit timestamps (live mode, tick replay) would
+        // otherwise produce a microscopic rectangle
+        const candleAlign = (s) => Math.floor(s / tfSec) * tfSec;
+        const entryOpen = candleAlign(t.entry_time);
+        const rightSec = t.exit_time != null
+          ? t.exit_time
+          : (session.is_live ? Math.floor(Date.now() / 1000) : session.current_time);
+        const rightOpen = candleAlign(rightSec);
         target.useBitmapCoordinateSpace((scope) => {
           const ctx = scope.context;
           const ts = attached.chart.timeScale();
           const series = attached.series;
-          const x1 = ts.timeToCoordinate(t.entry_time);
-          const rightTime = t.exit_time != null ? t.exit_time : session.current_time;
-          const x2 = ts.timeToCoordinate(rightTime);
-          if (x1 == null || x2 == null) return;
+          const x1c = ts.timeToCoordinate(entryOpen);
+          const x2c = ts.timeToCoordinate(rightOpen);
+          if (x1c == null || x2c == null) return;
           const yEntry = series.priceToCoordinate(t.entry_price);
           if (yEntry == null) return;
+          // extend by half a bar on each side so the rectangle covers the
+          // entry candle's body even when entry == right (e.g. a fresh trade)
+          const barW = ts.options().barSpacing || 8;
+          const xL = Math.min(x1c, x2c) - barW / 2;
+          const xR = Math.max(x1c, x2c) + barW / 2;
           const hpr = scope.horizontalPixelRatio;
           const vpr = scope.verticalPixelRatio;
-          const left = Math.min(x1, x2) * hpr;
-          const width = Math.max(1, Math.abs(x2 - x1)) * hpr;
+          const left = xL * hpr;
+          const width = Math.max(1, xR - xL) * hpr;
           const drawBox = (yOther, color) => {
             if (yOther == null) return;
             ctx.fillStyle = color;
@@ -847,7 +878,7 @@
   const TAPE_CAP = 400;
 
   const tapeRowHtml = (t, isLarge) => {
-    const time = new Date(t.time_ms).toISOString().slice(11, 19);
+    const time = tzHmsMs(t.time_ms);
     return `<span class="t">${time}</span>` +
       `<span>${t.price.toFixed(getPrecision(t.price))}</span>` +
       `<span class="q">${t.qty.toFixed(t.qty >= 100 ? 0 : 2)}</span>`;
@@ -875,10 +906,10 @@
       $("#tape-status").textContent = `${tapeBuffer.length} prints · tick replay · large = top 5%`;
     } else {
       const tfSec = TF_SECONDS[session.tf];
-      const open = new Date(session.current_time * 1000).toISOString().slice(11, 16);
-      const close = new Date((session.current_time + tfSec) * 1000).toISOString().slice(11, 16);
+      const open = tzHm(session.current_time);
+      const close = tzHm(session.current_time + tfSec);
       $("#tape-status").textContent =
-        `${tapeBuffer.length} prints in ${open}→${close} UTC  ·  large = top 5%`;
+        `${tapeBuffer.length} prints in ${open}→${close}  ·  large = top 5%`;
     }
   };
 
@@ -938,24 +969,35 @@
   // ---- Trade rendering
   const renderTrades = () => {
     if (!session) return;
+    // lightweight-charts markers must align with a candle's open time;
+    // tick-mode and live SL/TP set times mid-candle, so round down to the
+    // candle the event landed in
+    const tfSec = TF_SECONDS[session.tf];
+    const markerTime = (t) => (tfSec ? Math.floor(t / tfSec) * tfSec : t);
+    // for open trades in live mode the backend's pnl is stale (computed against
+    // last serialize); recompute against the live mark
+    const livePnl = (t) => {
+      if (t.status === "closed") return t.pnl ?? 0;
+      if (t.status !== "open" || t.entry_price == null) return 0;
+      const diff = (session.current_price - t.entry_price) * (t.side === "long" ? 1 : -1);
+      return diff * t.qty;
+    };
     const markers = [];
     for (const t of session.trades) {
       if (t.entry_time != null) {
         markers.push({
-          time: t.entry_time,
+          time: markerTime(t.entry_time),
           position: t.side === "long" ? "belowBar" : "aboveBar",
           color: t.side === "long" ? "#26a69a" : "#ef5350",
           shape: t.side === "long" ? "arrowUp" : "arrowDown",
-          text: `${t.side.toUpperCase()} ${t.qty}`,
         });
       }
       if (t.status === "closed" && t.exit_time != null) {
         markers.push({
-          time: t.exit_time,
+          time: markerTime(t.exit_time),
           position: "inBar",
           color: (t.pnl ?? 0) >= 0 ? "#26a69a" : "#ef5350",
           shape: "circle",
-          text: `EXIT (${t.exit_reason || ""})`,
         });
       }
     }
@@ -1000,7 +1042,7 @@
     for (const t of [...session.trades].reverse()) {
       const tr = document.createElement("tr");
       if (t.status === "closed") tr.classList.add("closed");
-      const pnl = t.pnl ?? 0;
+      const pnl = livePnl(t);
       if (t.status === "open") openPnl += pnl;
       if (t.status === "closed") {
         closedPnl += pnl; closed += 1;
@@ -1042,14 +1084,16 @@
     renderTrades();
     fetchTape();
     const atEnd = session.cursor >= session.total - 1;
-    $("#cursor-info").textContent = `${session.symbol} ${session.tf}  ${session.cursor + 1} / ${session.total}  @ ${new Date(session.current_time * 1000).toISOString().slice(0, 16).replace("T", " ")}  price ${session.current_price.toFixed(4)}`;
+    // in live mode there's always a current price (from WS), so trading stays enabled
+    const tradingDisabled = !session.is_live && atEnd;
+    $("#cursor-info").textContent = `${session.symbol} ${session.tf}  ${session.cursor + 1} / ${session.total}  @ ${tzYmdHm(session.current_time)}  price ${session.current_price.toFixed(4)}`;
     $("#mark-info").textContent = `Mark: ${session.current_price.toFixed(4)}`;
     $("#back-1").disabled = session.cursor <= 0;
     $("#next-1").disabled = atEnd;
     $("#play").disabled = atEnd;
-    $("#long-btn").disabled = atEnd;
-    $("#short-btn").disabled = atEnd;
-    if (atEnd && playTimer) stopPlay();
+    $("#long-btn").disabled = tradingDisabled;
+    $("#short-btn").disabled = tradingDisabled;
+    if (atEnd && playTimer && !session.is_live) stopPlay();
 
     if (isNew) {
       // re-enable auto-scale on the price axis so it follows the new data's price range
@@ -1126,19 +1170,35 @@
     const batch = liveTickBuffer;
     liveTickBuffer = [];
     try {
-      await api(`/api/session/${session.id}/push_ticks`, {
+      const resp = await api(`/api/session/${session.id}/push_ticks`, {
         method: "POST", body: JSON.stringify({ ticks: batch }),
       });
+      // merge any SL/TP/limit fills the backend processed on these ticks
+      if (resp.changed && resp.changed.length) {
+        for (const c of resp.changed) {
+          const idx = session.trades.findIndex((t) => t.id === c.id);
+          if (idx >= 0) session.trades[idx] = c;
+          else session.trades.push(c);
+        }
+        renderTrades();
+        for (const c of resp.changed) {
+          if (c.status === "closed") {
+            setStatus(`${c.side} closed via ${c.exit_reason ?? "—"} @ ${(c.exit_price ?? 0).toFixed(4)}`);
+          } else if (c.status === "open" && c.exit_time == null) {
+            setStatus(`${c.side} ${c.order_type} filled @ ${(c.entry_price ?? 0).toFixed(4)}`);
+          }
+        }
+      }
       refreshActiveIndicators();
     } catch (err) {
-      // requeue on failure so we don't lose data
       liveTickBuffer.unshift(...batch);
     }
   };
 
   const startLivePush = () => {
     stopLivePush();
-    livePushTimer = setInterval(pushLiveTicks, 2000);
+    // 500ms — responsive enough for SL/TP triggers, network-cheap
+    livePushTimer = setInterval(pushLiveTicks, 500);
   };
 
   const closeLiveStream = () => {
@@ -1164,8 +1224,10 @@
     session.current_time = candle.time;
     session.current_price = candle.close;
     $("#cursor-info").textContent =
-      `${session.symbol} ${session.tf}  LIVE  @ ${new Date(candle.time * 1000).toISOString().slice(0, 16).replace("T", " ")}  price ${candle.close.toFixed(4)}`;
+      `${session.symbol} ${session.tf}  LIVE  @ ${tzYmdHm(candle.time)}  price ${candle.close.toFixed(4)}`;
     $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
+    // refresh open-position P&L against the new live price
+    if (session.trades.some((t) => t.status === "open")) renderTrades();
     // when the kline closes, tell the backend so indicator endpoints can extend
     // their per-candle aggregations
     if (k.x === true && candle.time !== liveLastKlineTime) {
@@ -1475,7 +1537,11 @@
     try {
       const data = await api(`/api/session/${session.id}/trade`, {
         method: "POST",
-        body: JSON.stringify({ side, qty, order_type: orderType, limit_price: limitPrice, sl, tp }),
+        body: JSON.stringify({
+          side, qty, order_type: orderType, limit_price: limitPrice, sl, tp,
+          at_price: session.is_live ? session.current_price : null,
+          at_time: session.is_live ? Math.floor(Date.now() / 1000) : null,
+        }),
       });
       applySession(data);
       setStatus(orderType === "limit"
@@ -1492,9 +1558,15 @@
 
   const closeTrade = async (tid) => {
     if (!session) return;
-    if (playTimer) stopPlay();    // same race-avoidance as placeTrade
+    if (playTimer) stopPlay();
     try {
-      const data = await api(`/api/session/${session.id}/trade/${tid}/close`, { method: "POST" });
+      const data = await api(`/api/session/${session.id}/trade/${tid}/close`, {
+        method: "POST",
+        body: JSON.stringify({
+          at_price: session.is_live ? session.current_price : null,
+          at_time: session.is_live ? Math.floor(Date.now() / 1000) : null,
+        }),
+      });
       applySession(data);
     } catch (err) { setStatus(err.message, true); }
   };
@@ -1710,11 +1782,18 @@
   };
   modeSelect.addEventListener("change", () => {
     refreshModeUI();
-    if (modeSelect.value === "live") loadSession();    // auto-load on Live select
+    loadSession();                          // auto-reload in either direction
   });
   refreshModeUI();
 
   setupForm.addEventListener("submit", (e) => { e.preventDefault(); loadSession(); });
+
+  // in live mode, changing timeframe or market auto-reloads (the Load button
+  // is hidden). Symbol still needs Enter / form submit because typing into
+  // a text input shouldn't fire a reload per keystroke.
+  const autoLoadIfLive = () => { if (modeSelect.value === "live") loadSession(); };
+  $("#tf-select").addEventListener("change", autoLoadIfLive);
+  setupForm.querySelector('select[name="market"]').addEventListener("change", autoLoadIfLive);
   $("#next-1").addEventListener("click", () => {
     const n = parseInt($("#step-n").value, 10) || 1;
     if (isTickSpeed()) tickNext(n);

@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Chart Replay</title>
+  <title>Backtick — replay & live trader's chart</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%230f1218'/%3E%3Cg transform='rotate(40 20 20)'%3E%3Cline x1='20' y1='6' x2='20' y2='34' stroke='%2326a69a' stroke-width='2' stroke-linecap='round'/%3E%3Crect x='15' y='12' width='10' height='16' rx='2' fill='%2326a69a'/%3E%3C/g%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/style.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/themes/dark.css" />
@@ -11,7 +12,16 @@
 </head>
 <body>
   <header>
-    <div class="brand">Chart Replay</div>
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="40" height="40" rx="8" fill="#0f1218"/>
+        <g transform="rotate(40 20 20)">
+          <line x1="20" y1="6" x2="20" y2="34" stroke="#26a69a" stroke-width="2" stroke-linecap="round"/>
+          <rect x="15" y="12" width="10" height="16" rx="2" fill="#26a69a"/>
+        </g>
+      </svg>
+      <span>Backtick</span>
+    </div>
     <form id="setup-form" class="setup">
       <select name="mode" id="mode-select" title="Replay = historical chart; Live = real-time Binance stream">
         <option value="live" selected>Live</option>

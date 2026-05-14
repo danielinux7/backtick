@@ -333,12 +333,23 @@ class SessionStore:
             span_ms = max((warmup + 5) * tf_ms, 2 * 86_400_000)   # always span ≥ 2 days
             start_ms = now_ms - span_ms
             start_iso = dt.datetime.fromtimestamp(start_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
-            end_iso = dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
+            # _to_ms truncates to start-of-day, so end="today" would stop at last
+            # midnight and miss all of today's klines. Pass tomorrow to capture
+            # everything that has closed up to right now.
+            end_iso = (dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc)
+                       + dt.timedelta(days=1)).strftime("%Y-%m-%d")
             df = fetch_klines(symbol, tf, start_iso, end_iso, market=market)
             if df.empty:
                 raise ValueError("no recent candles for live session")
-            # keep only the most recent (warmup + 5) candles for a clean start
+            # drop the still-forming kline (if returned) so the chart's WS feed
+            # owns it cleanly — avoids stale OHLC for the live bar
+            tf_sec = tf_ms // 1000
+            now_s = now_ms // 1000
+            if int(df["time"].iloc[-1]) + tf_sec > now_s:
+                df = df.iloc[:-1]
             df = df.tail(warmup + 5).reset_index(drop=True)
+            if df.empty:
+                raise ValueError("no recent candles for live session")
             cursor = len(df) - 1
         else:
             if start is None or end is None:
