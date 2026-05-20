@@ -86,6 +86,31 @@ def _fetch_vision_day(symbol: str, market: str, date: str) -> pd.DataFrame:
     return df[OUT_COLS]
 
 
+def fetch_rest_recent(symbol: str, market: str, limit: int = 1000) -> pd.DataFrame:
+    """Pull the most recent N aggTrades via REST (no time filter). Used in live
+    mode to populate the tape right up to 'now', since the daily Vision archive
+    has no data for today and we don't want to paginate across hours just to
+    backfill a few minutes of prints."""
+    base = "https://fapi.binance.com" if market == "futures" else "https://api.binance.com"
+    path = "/fapi/v1/aggTrades" if market == "futures" else "/api/v3/aggTrades"
+    limit = max(1, min(limit, 1000))
+    with httpx.Client(timeout=15) as client:
+        r = client.get(f"{base}{path}",
+                       params={"symbol": symbol.upper(), "limit": limit})
+        r.raise_for_status()
+        rows = r.json()
+    if not rows:
+        return _empty_df()
+    df = pd.DataFrame({
+        "time_ms": [int(r["T"]) for r in rows],
+        "price": [float(r["p"]) for r in rows],
+        "qty": [float(r["q"]) for r in rows],
+        "is_buyer_maker": [bool(r["m"]) for r in rows],
+    }).astype({"time_ms": "int64", "price": "float64",
+               "qty": "float64", "is_buyer_maker": "bool"})
+    return df.sort_values("time_ms").reset_index(drop=True)
+
+
 def _fetch_rest_range(symbol: str, market: str, start_ms: int, end_ms: int) -> pd.DataFrame:
     """Pull aggTrades via REST for a (typically short) range, paginated by trade id.
     Binance caps each response at 1000 rows; we step forward by the last trade's time + 1.

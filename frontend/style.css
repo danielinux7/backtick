@@ -127,9 +127,28 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .pick:hover { background: #3a3e49; }
 .pick.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
 
-.tape-status { font-size: 11px; color: #777; margin-bottom: 4px; min-height: 14px; }
-.tape-list { flex: 1; overflow-y: auto; font-family: monospace; font-size: 11px; line-height: 1.5; min-height: 0; }
-.tape-row { display: grid; grid-template-columns: 60px 1fr 1fr; gap: 6px; padding: 1px 4px; border-radius: 2px; }
+.tape-controls { font-size: 12px; color: #aaa; margin-bottom: 4px; display: flex; gap: 8px; align-items: center; }
+.tape-controls .tc-label { color: #888; }
+.tape-controls .tc-readout {
+  color: #4dd0c1; font-variant-numeric: tabular-nums; min-width: 36px; text-align: right;
+}
+.tape-controls input[type="range"] {
+  flex: 1; min-width: 80px; height: 4px; -webkit-appearance: none; appearance: none;
+  background: linear-gradient(to right, #26a69a 0%, #26a69a var(--fill, 10%), #2a2e39 var(--fill, 10%), #2a2e39 100%);
+  border-radius: 2px; outline: none; cursor: pointer;
+}
+.tape-controls input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 12px; height: 12px;
+  background: #4dd0c1; border-radius: 50%; cursor: pointer; border: 2px solid #131722;
+  box-shadow: 0 0 0 1px #4dd0c1;
+}
+.tape-controls input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; background: #4dd0c1; border-radius: 50%; cursor: pointer;
+  border: 2px solid #131722; box-shadow: 0 0 0 1px #4dd0c1;
+}
+.tape-status { font-size: 12px; color: #777; margin-bottom: 4px; min-height: 14px; }
+.tape-list { flex: 1; overflow-y: auto; font-family: monospace; font-size: 14px; line-height: 1.55; min-height: 0; }
+.tape-row { display: grid; grid-template-columns: 72px 1fr 1fr; gap: 8px; padding: 2px 5px; border-radius: 2px; }
 .tape-row.buy  { background: rgba(38, 166, 154, 0.10); color: #4dd0c1; }
 .tape-row.sell { background: rgba(239, 83, 80, 0.10); color: #ff7d75; }
 .tape-row .t { color: #777; }

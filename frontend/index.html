@@ -151,6 +151,11 @@
 
       <div class="tape-panel">
         <h3>Time &amp; Sales</h3>
+        <div class="tape-controls">
+          <span class="tc-label">Large = top</span>
+          <input type="range" id="tape-large-pct" min="1" max="500" step="1" value="50" />
+          <span id="tape-large-pct-val" class="tc-readout">5%</span>
+        </div>
         <div id="tape-status" class="tape-status"></div>
         <div id="tape-list" class="tape-list"></div>
       </div>

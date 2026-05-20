@@ -217,9 +217,11 @@
         to: pAnchor + newPSpan * relY,
       });
     } else {
-      // plain wheel — time-only zoom; release any prior ratio lock
+      // plain wheel — anchor on the right edge so wheel-out reveals historical
+      // bars (the right side stays put; the left side expands into the past).
+      // Ctrl/Cmd+wheel above still anchors on the mouse for precision zoom.
       if (lockedRatio !== null) resetZoomLock();
-      ts.setVisibleLogicalRange(newTimeRange);
+      ts.setVisibleLogicalRange({ from: tr.to - newTSpan, to: tr.to });
     }
   };
   chartEl.addEventListener("wheel", wheelZoom, { passive: false });
@@ -891,25 +893,31 @@
       $("#tape-status").textContent = session ? "no trades yet" : "";
       return;
     }
+    // adaptive percentile threshold — slider stores raw int (1..500); divide
+    // by 10 for 0.1%..50% (finer resolution at the low end where it matters)
+    const raw = parseInt($("#tape-large-pct").value, 10);
+    const pct = (isFinite(raw) && raw > 0 ? raw : 50) / 10;
     const qtys = tapeBuffer.map((t) => t.qty).sort((a, b) => a - b);
-    const p95 = qtys[Math.floor(qtys.length * 0.95)] || Infinity;
+    const cutoffIdx = Math.min(qtys.length - 1, Math.floor(qtys.length * (1 - pct / 100)));
+    const largeThr = qtys[cutoffIdx] || Infinity;
+    const largeDesc = `large = top ${pct}%`;
     // newest at top
     for (let i = tapeBuffer.length - 1; i >= 0; i--) {
       const t = tapeBuffer[i];
       const row = document.createElement("div");
-      row.className = `tape-row ${t.side}${t.qty >= p95 ? " large" : ""}`;
+      row.className = `tape-row ${t.side}${t.qty >= largeThr ? " large" : ""}`;
       row.innerHTML = tapeRowHtml(t);
       list.appendChild(row);
     }
     const speed = $("#speed").value;
     if (speed.startsWith("tick:")) {
-      $("#tape-status").textContent = `${tapeBuffer.length} prints · tick replay · large = top 5%`;
+      $("#tape-status").textContent = `${tapeBuffer.length} prints · tick replay · ${largeDesc}`;
     } else {
       const tfSec = TF_SECONDS[session.tf];
       const open = tzHm(session.current_time);
       const close = tzHm(session.current_time + tfSec);
       $("#tape-status").textContent =
-        `${tapeBuffer.length} prints in ${open}→${close}  ·  large = top 5%`;
+        `${tapeBuffer.length} prints in ${open}→${close}  ·  ${largeDesc}`;
     }
   };
 
@@ -1102,8 +1110,10 @@
       // defer one frame so the chart has rendered the new data before we set the range
       requestAnimationFrame(() => {
         const n = session.candles.length;   // warmup candles + cursor candle
-        // show all warmup candles plus a few empty slots on the right for what's coming
-        chart.timeScale().setVisibleLogicalRange({ from: 0, to: n + 5 });
+        // when many candles are loaded, show only the most recent INITIAL_VISIBLE_BARS
+        // so each bar stays readable; user can zoom out to reveal older history
+        const from = Math.max(0, n - INITIAL_VISIBLE_BARS);
+        chart.timeScale().setVisibleLogicalRange({ from, to: n + 5 });
       });
     }
   };
@@ -1113,6 +1123,8 @@
     disarm();
     closeLiveStream();
     clearAllDrawings();
+    extendingHistory = false;
+    extendExhausted = false;
     candleSeries.setData([]);
     candleMarkers.setMarkers([]);
     for (const p of tradeZones.values()) candleSeries.detachPrimitive(p);
@@ -1142,6 +1154,50 @@
     $("#t-limit").value = "";
     session = null;
   };
+
+  // ---- Infinite history backfill: when the user pans/zooms near the leftmost
+  // loaded candle, fetch older candles from the backend and prepend them.
+  const EXTEND_THRESHOLD = 50;   // bars: trigger when visible from < this many
+  const EXTEND_BATCH = 500;      // bars to fetch per extension
+  let extendingHistory = false;
+  let extendExhausted = false;   // backend returned 0 — symbol likely has no more history
+
+  const extendHistory = async () => {
+    if (!session || extendingHistory || extendExhausted) return;
+    extendingHistory = true;
+    const sidAtStart = session.id;
+    try {
+      const data = await api(`/api/session/${session.id}/extend_history`, {
+        method: "POST", body: JSON.stringify({ candles: EXTEND_BATCH }),
+      });
+      // session may have been replaced (load/reload) while we awaited; bail
+      if (!session || session.id !== sidAtStart) return;
+      if (!data.added) { extendExhausted = true; return; }
+      const tr = chart.timeScale().getVisibleLogicalRange();
+      session.candles = [...data.candles, ...session.candles];
+      session.cursor = data.cursor;
+      session.total = data.total;
+      candleSeries.setData(session.candles);
+      renderIndicators();
+      // preserve the user's view: shift logical indices by the number of bars prepended
+      if (tr) {
+        chart.timeScale().setVisibleLogicalRange({
+          from: tr.from + data.added,
+          to: tr.to + data.added,
+        });
+      }
+    } catch (err) {
+      // network/server hiccup — don't latch exhausted, just give up this round
+      console.warn("extend history failed", err);
+    } finally {
+      extendingHistory = false;
+    }
+  };
+
+  chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    if (!range || !session) return;
+    if (range.from < EXTEND_THRESHOLD) extendHistory();
+  });
 
   // ---- Live mode (Binance WebSocket stream)
   let liveTickBuffer = [];
@@ -1306,6 +1362,10 @@
 
     if (mode === "live") {
       body.live = true;
+      // load enough history to cover ~3 months at this tf so zooming out reveals more bars
+      const HISTORY_DAYS = 90;
+      const minWarmup = Math.ceil((HISTORY_DAYS * 86400) / tfSec);
+      body.warmup = Math.max(body.warmup, minWarmup);
     } else {
       const replayDate = parseDmy(fd.get("replay_date"));
       if (!replayDate) { showFieldError($("#replay-date"), "use dd/mm/yyyy"); return; }
@@ -1804,6 +1864,17 @@
   $("#long-btn").addEventListener("click", () => placeTrade("long"));
   $("#short-btn").addEventListener("click", () => placeTrade("short"));
   document.querySelectorAll(".ind").forEach((el) => el.addEventListener("change", renderIndicators));
+  const tapePctSlider = $("#tape-large-pct");
+  const updateTapePctReadout = () => {
+    const pct = (parseInt(tapePctSlider.value, 10) || 50) / 10;
+    $("#tape-large-pct-val").textContent = `${pct}%`;
+    // paint the filled portion of the slider track
+    const rng = tapePctSlider.max - tapePctSlider.min;
+    const fill = ((tapePctSlider.value - tapePctSlider.min) / rng) * 100;
+    tapePctSlider.style.setProperty("--fill", `${fill}%`);
+  };
+  tapePctSlider.addEventListener("input", () => { updateTapePctReadout(); renderTape(); });
+  updateTapePctReadout();
   // Track previous mode so we can drop the pending tick queue when leaving
   // tick mode (those ticks would no longer match where the cursor will be).
   let _prevSpeedTick = isTickSpeed();

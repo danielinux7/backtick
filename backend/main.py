@@ -1,6 +1,7 @@
 """FastAPI app: serves the frontend and exposes the replay/trade API."""
 from __future__ import annotations
 
+import datetime as dt
 import secrets
 from pathlib import Path
 
@@ -10,8 +11,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .aggtrades import fetch_agg_trades
-from .binance import TF_MS, VALID_TFS
+from .aggtrades import fetch_agg_trades, fetch_rest_recent
+from .binance import TF_MS, VALID_TFS, fetch_klines
 from .replay import SessionStore, Trade
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -43,6 +44,10 @@ class CreateSessionReq(BaseModel):
 
 class StepReq(BaseModel):
     n: int = 1
+
+
+class ExtendHistoryReq(BaseModel):
+    candles: int = 500
 
 
 class TradeReq(BaseModel):
@@ -127,6 +132,44 @@ def get_session(sid: str) -> dict:
     except KeyError:
         raise HTTPException(404, "session not found")
     return _serialize_session(sess)
+
+
+@app.post("/api/session/{sid}/extend_history")
+def extend_history(sid: str, req: ExtendHistoryReq) -> dict:
+    """Prepend older klines to the session so the chart can scroll further back."""
+    try:
+        sess = store.get(sid)
+    except KeyError:
+        raise HTTPException(404, "session not found")
+    n = max(1, min(req.candles, 5000))
+    with sess.lock:
+        if sess.df.empty:
+            return {"added": 0, "candles": [], "cursor": sess.cursor, "total": int(len(sess.df))}
+        first_time = int(sess.df["time"].iloc[0])
+        tf_sec = TF_MS[sess.tf] // 1000
+        end_ms = first_time * 1000
+        # pad by one tf so date-truncated start_iso doesn't cut us short
+        start_ms = end_ms - (n + 1) * tf_sec * 1000
+        start_iso = dt.datetime.fromtimestamp(start_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
+        end_iso = dt.datetime.fromtimestamp(end_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
+        try:
+            new_df = fetch_klines(sess.symbol, sess.tf, start_iso, end_iso, market=sess.market)
+        except Exception as e:
+            raise HTTPException(502, f"history fetch failed: {e}") from e
+        new_df = new_df[new_df["time"] < first_time].reset_index(drop=True)
+        # tail(n) so we return at most n bars even if the cached range pulled more
+        new_df = new_df.tail(n).reset_index(drop=True)
+        if new_df.empty:
+            return {"added": 0, "candles": [], "cursor": sess.cursor, "total": int(len(sess.df))}
+        added = int(len(new_df))
+        sess.df = pd.concat([new_df, sess.df], ignore_index=True)
+        sess.cursor += added
+        candles = [
+            {"time": int(r.time), "open": r.open, "high": r.high,
+             "low": r.low, "close": r.close, "volume": r.volume}
+            for r in new_df.itertuples(index=False)
+        ]
+    return {"added": added, "candles": candles, "cursor": sess.cursor, "total": int(len(sess.df))}
 
 
 @app.post("/api/session/{sid}/step")
@@ -503,16 +546,26 @@ def recent_trades(sid: str, n: int = 60) -> dict:
         raise HTTPException(404, "session not found")
     n = max(1, min(n, 500))
     tf_ms = TF_MS[sess.tf]
-    end_ms = sess.current_time() * 1000 + tf_ms                 # end of cursor candle
-    # widen the lookback window if the symbol is illiquid — try up to ~10 candles
-    for window_candles in (1, 3, 10):
-        start_ms = end_ms - tf_ms * window_candles
+    if sess.is_live:
+        # Vision archive doesn't carry today, and _get_agg_trades returns empty
+        # for today to avoid burning the REST rate limit. Hit /aggTrades directly
+        # for the most recent prints so the tape lands right at 'now' — no gap
+        # between the last closed-candle prints and the live WS feed.
         try:
-            df = _get_agg_trades(sess, start_ms, end_ms)
+            df = fetch_rest_recent(sess.symbol, sess.market, limit=max(n, 200))
         except Exception as e:
             raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
-        if len(df) >= n or window_candles == 10:
-            break
+    else:
+        end_ms = sess.current_time() * 1000 + tf_ms             # end of cursor candle
+        # widen the lookback window if the symbol is illiquid — try up to ~10 candles
+        for window_candles in (1, 3, 10):
+            start_ms = end_ms - tf_ms * window_candles
+            try:
+                df = _get_agg_trades(sess, start_ms, end_ms)
+            except Exception as e:
+                raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
+            if len(df) >= n or window_candles == 10:
+                break
     df = df.tail(n)
     return {
         "trades": [
