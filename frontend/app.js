@@ -583,6 +583,9 @@
       paneViews() {
         return [{ zOrder: () => "bottom", renderer: () => renderer }];
       },
+      requestRedraw() {
+        if (attached?.requestUpdate) attached.requestUpdate();
+      },
     };
   };
 
@@ -608,6 +611,15 @@
         tradeZones.set(id, p);
       }
     }
+    // Custom paneView primitives aren't always repainted as part of the chart's
+    // built-in series redraw (markers, price lines), so they can lag a frame
+    // behind candles on session reload. Explicitly mark every zone dirty now,
+    // and again on the next frame once the price scale has auto-scaled, so the
+    // zones paint with valid priceToCoordinate values in lockstep with the bars.
+    for (const p of tradeZones.values()) p.requestRedraw?.();
+    requestAnimationFrame(() => {
+      for (const p of tradeZones.values()) p.requestRedraw?.();
+    });
   };
 
   // ---- Footprint overlay (per-candle volume-by-price, drawn behind candles)
@@ -1013,12 +1025,18 @@
     candleMarkers.setMarkers(markers);
     syncTradeZones();
 
-    for (const lines of tradePriceLines.values()) {
-      for (const line of lines) candleSeries.removePriceLine(line);
-    }
-    tradePriceLines.clear();
+    // Diff price lines instead of remove-all-then-recreate: re-using lines whose
+    // trade state hasn't changed avoids per-line redraw churn on every render.
+    const wantIds = new Set();
     for (const t of session.trades) {
       if (t.status === "closed") continue;
+      wantIds.add(t.id);
+      const fp = `${t.status}|${t.side}|${t.qty}|${t.limit_price}|${t.entry_price}|${t.sl}|${t.tp}`;
+      const existing = tradePriceLines.get(t.id);
+      if (existing && existing.fp === fp) continue;
+      if (existing) {
+        for (const line of existing.lines) candleSeries.removePriceLine(line);
+      }
       const lines = [];
       if (t.status === "pending" && t.limit_price != null) {
         lines.push(candleSeries.createPriceLine({
@@ -1041,7 +1059,12 @@
       if (t.tp != null) lines.push(candleSeries.createPriceLine({
         price: t.tp, color: "#26a69a", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "TP",
       }));
-      tradePriceLines.set(t.id, lines);
+      tradePriceLines.set(t.id, { lines, fp });
+    }
+    for (const [id, entry] of tradePriceLines) {
+      if (wantIds.has(id)) continue;
+      for (const line of entry.lines) candleSeries.removePriceLine(line);
+      tradePriceLines.delete(id);
     }
 
     const tbody = $("#trades-table tbody");
@@ -1107,28 +1130,52 @@
       // re-enable auto-scale on the price axis so it follows the new data's price range
       resetZoomLock();
       rsiChart.priceScale("right").applyOptions({ autoScale: true });
-      // defer one frame so the chart has rendered the new data before we set the range
+      const n = session.candles.length;   // warmup candles + cursor candle
+      // when many candles are loaded, show only the most recent INITIAL_VISIBLE_BARS
+      // so each bar stays readable; user can zoom out to reveal older history
+      const from = Math.max(0, n - INITIAL_VISIBLE_BARS);
+      // apply synchronously so the first paint after setData uses the right zoom —
+      // otherwise time-based primitives (SL/TP zones) render at full-fit width
+      // (sub-pixel) for one frame and visibly pop in on the next.
+      chart.timeScale().setVisibleLogicalRange({ from, to: n + 5 });
+      // also pre-seed the price scale from the visible candles' low/high so
+      // priceToCoordinate returns valid coords on the FIRST paint; otherwise
+      // custom paneView primitives (trade-zone rectangles) bail (yEntry == null)
+      // for one frame until autoScale settles, producing the "zones pop in late"
+      // lag the user can see. autoScale is re-enabled on the next frame.
+      const visible = session.candles.slice(from);
+      if (visible.length) {
+        let pmin = Infinity, pmax = -Infinity;
+        for (const c of visible) {
+          if (c.low < pmin) pmin = c.low;
+          if (c.high > pmax) pmax = c.high;
+        }
+        if (pmax > pmin) {
+          const pad = (pmax - pmin) * 0.05;
+          priceScale.setVisibleRange({ from: pmin - pad, to: pmax + pad });
+        }
+      }
       requestAnimationFrame(() => {
-        const n = session.candles.length;   // warmup candles + cursor candle
-        // when many candles are loaded, show only the most recent INITIAL_VISIBLE_BARS
-        // so each bar stays readable; user can zoom out to reveal older history
-        const from = Math.max(0, n - INITIAL_VISIBLE_BARS);
         chart.timeScale().setVisibleLogicalRange({ from, to: n + 5 });
+        priceScale.applyOptions({ autoScale: true });
       });
     }
   };
 
-  const resetForNewSession = () => {
+  const resetForNewSession = ({ preserveHlines = false, preserveTrades = false } = {}) => {
     stopPlay();
     disarm();
     closeLiveStream();
-    clearAllDrawings();
+    if (preserveHlines) clearMeasure();
+    else clearAllDrawings();
     extendingHistory = false;
     extendExhausted = false;
     candleSeries.setData([]);
-    candleMarkers.setMarkers([]);
-    for (const p of tradeZones.values()) candleSeries.detachPrimitive(p);
-    tradeZones.clear();
+    if (!preserveTrades) {
+      candleMarkers.setMarkers([]);
+      for (const p of tradeZones.values()) candleSeries.detachPrimitive(p);
+      tradeZones.clear();
+    }
     setVolumeProfileVisible(false);
     setFootprintVisible(false);
     liquidationMarkers.setMarkers([]); liqEvents = []; liqLastKey = null;
@@ -1138,10 +1185,12 @@
     resetTickReplay();
     $("#tape-list").innerHTML = "";
     $("#tape-status").textContent = "";
-    for (const lines of tradePriceLines.values()) {
-      for (const line of lines) candleSeries.removePriceLine(line);
+    if (!preserveTrades) {
+      for (const entry of tradePriceLines.values()) {
+        for (const line of entry.lines) candleSeries.removePriceLine(line);
+      }
+      tradePriceLines.clear();
     }
-    tradePriceLines.clear();
     for (const p of Object.keys(emaSeries).map(Number)) {
       chart.removeSeries(emaSeries[p]);
       delete emaSeries[p];
@@ -1383,7 +1432,17 @@
     const signal = loadAbort.signal;
     setStatus(mode === "live" ? "connecting…" : "loading…");
     try {
-      resetForNewSession();
+      const sameSymbol = session && session.symbol === body.symbol;
+      // trades are mode-/market-specific (live and replay portfolios are separate;
+      // spot and futures positions don't transfer either) — only carry them
+      // across when ALL of symbol, market, and mode match.
+      const sameMarket = session && session.market === body.market;
+      const sameMode = session && Boolean(session.is_live) === (mode === "live");
+      const inheritTrades = sameSymbol && sameMarket && sameMode;
+      if (inheritTrades && session.trades?.length) {
+        body.inherit_trades = session.trades;
+      }
+      resetForNewSession({ preserveHlines: sameSymbol, preserveTrades: inheritTrades });
       closeLiveStream();
       const data = await api("/api/session", {
         method: "POST", body: JSON.stringify(body), signal,

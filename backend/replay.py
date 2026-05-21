@@ -63,6 +63,36 @@ class Trade:
         }
 
 
+def _trade_from_dict(d: dict) -> Trade | None:
+    try:
+        return Trade(
+            id=str(d["id"]),
+            side=str(d["side"]),
+            qty=float(d["qty"]),
+            order_type=str(d.get("order_type", "market")),
+            created_time=int(d["created_time"]),
+            status=str(d.get("status", "pending")),
+            limit_price=_opt_float(d.get("limit_price")),
+            entry_time=_opt_int(d.get("entry_time")),
+            entry_price=_opt_float(d.get("entry_price")),
+            sl=_opt_float(d.get("sl")),
+            tp=_opt_float(d.get("tp")),
+            exit_time=_opt_int(d.get("exit_time")),
+            exit_price=_opt_float(d.get("exit_price")),
+            exit_reason=d.get("exit_reason"),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _opt_float(v) -> float | None:
+    return None if v is None else float(v)
+
+
+def _opt_int(v) -> int | None:
+    return None if v is None else int(v)
+
+
 @dataclass
 class Session:
     id: str
@@ -324,7 +354,8 @@ class SessionStore:
     def create(self, symbol: str, market: str, tf: str,
                start: str | None = None, end: str | None = None,
                warmup: int = 100, replay_ts: int | None = None,
-               live: bool = False) -> Session:
+               live: bool = False,
+               inherit_trades: list[dict] | None = None) -> Session:
         if live:
             # pull recent klines as warmup context; the frontend takes over
             # via Binance WS streams for live updates
@@ -366,6 +397,9 @@ class SessionStore:
         sess = Session(id=sid, symbol=symbol.upper(), market=market, tf=tf,
                        start=start or "", end=end or "",
                        df=df, cursor=cursor, is_live=live)
+        if inherit_trades:
+            rebuilt = (_trade_from_dict(t) for t in inherit_trades)
+            sess.trades = [t for t in rebuilt if t is not None]
         with self._lock:
             self._sessions[sid] = sess
         return sess

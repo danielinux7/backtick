@@ -40,6 +40,9 @@ class CreateSessionReq(BaseModel):
     warmup: int = 100
     replay_ts: int | None = None   # unix seconds; if set, cursor lands on first candle >= this
     live: bool = False             # true = pull recent klines and stream live updates client-side
+    # carry trades over from a previous session (e.g. when the user switches
+    # timeframe). Trades use unix timestamps, so they're tf-independent.
+    inherit_trades: list[dict] | None = None
 
 
 class StepReq(BaseModel):
@@ -117,7 +120,8 @@ def create_session(req: CreateSessionReq) -> dict:
         raise HTTPException(400, f"unsupported tf {req.tf}")
     try:
         sess = store.create(req.symbol, req.market, req.tf, req.start, req.end,
-                            warmup=req.warmup, replay_ts=req.replay_ts, live=req.live)
+                            warmup=req.warmup, replay_ts=req.replay_ts, live=req.live,
+                            inherit_trades=req.inherit_trades)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
