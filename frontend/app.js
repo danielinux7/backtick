@@ -408,13 +408,26 @@
     try {
       const me = await api("/api/auth/me");
       const slot = document.querySelector("#user-info");
-      if (slot) slot.innerHTML = `<span class="user-email">${me.email}</span> · <a href="#" id="logout-link">Logout</a>`;
-      const logout = document.querySelector("#logout-link");
-      if (logout) logout.addEventListener("click", async (e) => {
-        e.preventDefault();
-        try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
-        window.location.href = "/login";
-      });
+      if (slot) {
+        // Build via DOM, not innerHTML — OAuth emails come from Google and
+        // bypass our regex validation, so don't interpolate them as HTML.
+        slot.textContent = "";
+        const emailSpan = document.createElement("span");
+        emailSpan.className = "user-email";
+        emailSpan.textContent = me.email;
+        slot.appendChild(emailSpan);
+        slot.appendChild(document.createTextNode(" · "));
+        const logoutLink = document.createElement("a");
+        logoutLink.href = "#";
+        logoutLink.id = "logout-link";
+        logoutLink.textContent = "Logout";
+        slot.appendChild(logoutLink);
+        logoutLink.addEventListener("click", async (e) => {
+          e.preventDefault();
+          try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
+          window.location.href = "/login";
+        });
+      }
     } catch (_) {
       // api() already redirected on 401; nothing more to do.
     }

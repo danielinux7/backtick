@@ -114,7 +114,10 @@ async def upsert_oauth_user(db: AsyncSession, email: str, google_sub: str) -> Us
     """Link or create the user identified by Google's sub claim. If an account
     already exists for this email (password-only), attach the google_sub to it
     rather than creating a duplicate."""
-    email = email.lower().strip()
+    import re
+    email = (email or "").lower().strip()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        raise HTTPException(400, "invalid email from oauth provider")
     res = await db.execute(select(User).where(User.google_sub == google_sub))
     user = res.scalar_one_or_none()
     if user is not None:

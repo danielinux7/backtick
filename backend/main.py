@@ -678,12 +678,23 @@ async def push_kline(
 async def delete_session(
     sid: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Delete from both the in-memory store and the persisted snapshot.
+    Validates ownership at BOTH layers — without the DB check, a cold-cache
+    snapshot belonging to another user could be deleted by anyone with its sid."""
+    in_memory_ok = False
     try:
         sess = store.get(sid)
         if sess.user_id is not None and sess.user_id != user.id:
             raise HTTPException(404, "session not found")
+        in_memory_ok = True
     except KeyError:
         pass
+    from .models import ReplaySnapshot
+    row = await db.get(ReplaySnapshot, sid)
+    if row is not None and row.user_id != user.id:
+        raise HTTPException(404, "session not found")
+    if not in_memory_ok and row is None:
+        raise HTTPException(404, "session not found")
     store.delete(sid)
     await delete_snapshot(db, sid)
     return {"ok": True}
