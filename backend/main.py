@@ -2,24 +2,51 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import secrets
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.sessions import SessionMiddleware
 
 from .aggtrades import fetch_agg_trades, fetch_rest_recent
+from .auth import current_user, current_user_optional
 from .binance import TF_MS, VALID_TFS, fetch_klines
+from .db import Base, engine, get_db
+from .models import User
 from .replay import SessionStore, Trade
+from .routes_auth import router as auth_router
+from .snapshots import delete_snapshot, hydrate_session, save_snapshot
 
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 
 app = FastAPI(title="Chart Replay")
 store = SessionStore()
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ.get("SESSION_SECRET", "dev-only-not-secret-change-me"),
+    same_site="lax",
+    https_only=os.environ.get("RENDER", "").lower() in {"1", "true"},
+)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    """Auto-create tables on cold start in dev. In production Alembic handles
+    migrations as a preDeploy step, but create_all() is idempotent so it's
+    safe to keep here for SQLite-first local runs."""
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+app.include_router(auth_router)
 
 
 @app.middleware("http")
@@ -109,6 +136,13 @@ def _serialize_session(sess) -> dict:
     }
 
 
+async def _resolve(db: AsyncSession, sid: str, user_id: int):
+    sess = await hydrate_session(db, store, sid, user_id)
+    if sess is None:
+        raise HTTPException(404, "session not found")
+    return sess
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     return {"ok": True}
@@ -120,36 +154,40 @@ def timeframes() -> dict:
 
 
 @app.post("/api/session")
-def create_session(req: CreateSessionReq) -> dict:
+async def create_session(
+    req: CreateSessionReq,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     if req.tf not in VALID_TFS:
         raise HTTPException(400, f"unsupported tf {req.tf}")
     try:
         sess = store.create(req.symbol, req.market, req.tf, req.start, req.end,
                             warmup=req.warmup, replay_ts=req.replay_ts, live=req.live,
-                            inherit_trades=req.inherit_trades)
+                            inherit_trades=req.inherit_trades, user_id=user.id)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
         raise HTTPException(502, f"data fetch failed: {e}") from e
+    await save_snapshot(db, sess)
     return _serialize_session(sess)
 
 
 @app.get("/api/session/{sid}")
-def get_session(sid: str) -> dict:
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def get_session(
+    sid: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     return _serialize_session(sess)
 
 
 @app.post("/api/session/{sid}/extend_history")
-def extend_history(sid: str, req: ExtendHistoryReq) -> dict:
+async def extend_history(
+    sid: str, req: ExtendHistoryReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
     """Prepend older klines to the session so the chart can scroll further back."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+    sess = await _resolve(db, sid, user.id)
     n = max(1, min(req.candles, 5000))
     with sess.lock:
         if sess.df.empty:
@@ -166,7 +204,6 @@ def extend_history(sid: str, req: ExtendHistoryReq) -> dict:
         except Exception as e:
             raise HTTPException(502, f"history fetch failed: {e}") from e
         new_df = new_df[new_df["time"] < first_time].reset_index(drop=True)
-        # tail(n) so we return at most n bars even if the cached range pulled more
         new_df = new_df.tail(n).reset_index(drop=True)
         if new_df.empty:
             return {"added": 0, "candles": [], "cursor": sess.cursor, "total": int(len(sess.df))}
@@ -178,20 +215,19 @@ def extend_history(sid: str, req: ExtendHistoryReq) -> dict:
              "low": r.low, "close": r.close, "volume": r.volume}
             for r in new_df.itertuples(index=False)
         ]
+    await save_snapshot(db, sess)
     return {"added": added, "candles": candles, "cursor": sess.cursor, "total": int(len(sess.df))}
 
 
 @app.post("/api/session/{sid}/step")
-def step(sid: str, req: StepReq) -> dict:
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def step(
+    sid: str, req: StepReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     with sess.lock:
         changed = []
         n = max(1, min(req.n, 5000))
-        # if a tick-mode replay had a partial candle in flight, finalize it
-        # via the kline before stepping further
         if sess.tick_idx > 0 and sess.cursor < len(sess.df) - 1:
             sess.cursor += 1
             sess.reset_tick_state()
@@ -205,17 +241,18 @@ def step(sid: str, req: StepReq) -> dict:
     body = _serialize_session(sess)
     body["changed"] = [t.to_dict(sess.current_price()) for t in changed]
     body["at_end"] = sess.cursor >= len(sess.df) - 1
+    await save_snapshot(db, sess)
     return body
 
 
 @app.post("/api/session/{sid}/tick_step")
-def tick_step(sid: str, req: StepReq) -> dict:
+async def tick_step(
+    sid: str, req: StepReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
     """Advance n aggTrades (lazily fetched per forming candle). Returns the
     newly-revealed prints so the frontend tape can stream them in."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+    sess = await _resolve(db, sid, user.id)
     with sess.lock:
         n = max(1, min(req.n, 5000))
         new_ticks, changed = sess.step_tick(n)
@@ -224,57 +261,53 @@ def tick_step(sid: str, req: StepReq) -> dict:
     body["changed"] = [t.to_dict(sess.current_price()) for t in changed]
     body["at_end"] = (sess.cursor >= len(sess.df) - 1
                      and (sess.tick_aggs is None or sess.tick_idx >= len(sess.tick_aggs)))
+    await save_snapshot(db, sess)
     return body
 
 
 @app.post("/api/session/{sid}/back")
-def back(sid: str, req: StepReq) -> dict:
+async def back(
+    sid: str, req: StepReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
     """Rewind cursor. Reopens trades whose fill/exit happened after the new cursor."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+    sess = await _resolve(db, sid, user.id)
     with sess.lock:
         n = max(1, min(req.n, 5000))
-        sess.reset_tick_state()       # rewind cancels any partial-candle tick replay
+        sess.reset_tick_state()
         sess.cursor = max(0, sess.cursor - n)
         new_time = sess.current_time()
         survivors: list[Trade] = []
         for t in sess.trades:
-            # drop trades submitted in the (now) future
             if t.created_time > new_time:
                 continue
-            # un-close trades whose exit was in the future
             if t.exit_time is not None and t.exit_time > new_time:
                 t.exit_time = None
                 t.exit_price = None
                 t.exit_reason = None
                 t.status = "open" if t.entry_time is not None else "pending"
-            # un-fill trades whose entry was in the future
             if t.entry_time is not None and t.entry_time > new_time:
                 t.entry_time = None
                 t.entry_price = None
                 t.status = "pending"
             survivors.append(t)
         sess.trades = survivors
+    await save_snapshot(db, sess)
     return _serialize_session(sess)
 
 
 @app.post("/api/session/{sid}/trade")
-def place_trade(sid: str, req: TradeReq) -> dict:
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def place_trade(
+    sid: str, req: TradeReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     with sess.lock:
-        # in live mode the chart's "now" price is owned by the frontend WS feed,
-        # so honor at_price if it was supplied
         mark = float(req.at_price) if req.at_price is not None else sess.current_price()
 
         if req.order_type == "limit":
             if req.limit_price is None or req.limit_price <= 0:
                 raise HTTPException(400, "limit_price required for limit order")
-            # require limit on the correct side of market price
             if req.side == "long" and req.limit_price >= mark:
                 raise HTTPException(400, "long limit must be below market price")
             if req.side == "short" and req.limit_price <= mark:
@@ -294,9 +327,6 @@ def place_trade(sid: str, req: TradeReq) -> dict:
             if req.tp is not None and req.tp >= ref_price:
                 raise HTTPException(400, "short TP must be below entry")
 
-        # in live mode the frontend supplies the actual "now" timestamp;
-        # sess.current_time() is the last completed kline's open, which is the
-        # PREVIOUS candle and would mis-place markers.
         now_ts = int(req.at_time) if req.at_time is not None else sess.current_time()
         trade = Trade(
             id=secrets.token_hex(4),
@@ -310,12 +340,13 @@ def place_trade(sid: str, req: TradeReq) -> dict:
         if req.order_type == "market":
             trade.status = "open"
             trade.entry_time = now_ts
-            trade.entry_price = mark        # uses at_price in live mode
+            trade.entry_price = mark
         else:
             trade.status = "pending"
             trade.limit_price = req.limit_price
 
         sess.trades.append(trade)
+    await save_snapshot(db, sess)
     return _serialize_session(sess)
 
 
@@ -325,11 +356,11 @@ class CloseTradeReq(BaseModel):
 
 
 @app.post("/api/session/{sid}/trade/{tid}/close")
-def close_trade(sid: str, tid: str, req: CloseTradeReq = CloseTradeReq()) -> dict:
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def close_trade(
+    sid: str, tid: str, req: CloseTradeReq = CloseTradeReq(),
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     with sess.lock:
         for t in sess.trades:
             if t.id == tid and t.status in ("open", "pending"):
@@ -343,18 +374,17 @@ def close_trade(sid: str, tid: str, req: CloseTradeReq = CloseTradeReq()) -> dic
                 break
         else:
             raise HTTPException(404, "trade not found or already closed")
+    await save_snapshot(db, sess)
     return _serialize_session(sess)
 
 
 @app.get("/api/session/{sid}/footprint")
-def footprint(sid: str, from_ts: int, to_ts: int, levels: int = 10) -> dict:
-    """Per-candle buy/sell volume split by price level inside the candle. Used
-    by the footprint overlay — only meaningful when the chart is zoomed in far
-    enough that each candle has decent horizontal space."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def footprint(
+    sid: str, from_ts: int, to_ts: int, levels: int = 10,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Per-candle buy/sell volume split by price level inside the candle."""
+    sess = await _resolve(db, sid, user.id)
     levels = max(4, min(40, levels))
     try:
         df = _get_agg_trades(sess, from_ts * 1000, to_ts * 1000)
@@ -363,7 +393,6 @@ def footprint(sid: str, from_ts: int, to_ts: int, levels: int = 10) -> dict:
     if df.empty:
         return {"candles": []}
     tf_ms = TF_MS[sess.tf]
-    # which candle does each trade belong to (open time, seconds)
     candle_open = ((df["time_ms"].astype("int64") // tf_ms) * tf_ms) // 1000
     df = df.assign(_co=candle_open)
     out = []
@@ -397,16 +426,12 @@ def footprint(sid: str, from_ts: int, to_ts: int, levels: int = 10) -> dict:
 
 
 @app.get("/api/session/{sid}/liquidations")
-def liquidations(sid: str, from_ts: int, to_ts: int,
-                 percentile: float = 0.995, min_qty: float = 0.0) -> dict:
-    """Heuristic liquidation candidates — aggTrade prints whose qty sits in the
-    top 1 - percentile of the visible window. Not real liquidation data
-    (Binance deprecated /allForceOrders in 2021), but large taker prints are
-    correlated with liquidation cascades and whale exits."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def liquidations(
+    sid: str, from_ts: int, to_ts: int,
+    percentile: float = 0.995, min_qty: float = 0.0,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     percentile = max(0.5, min(0.9999, percentile))
     try:
         df = _get_agg_trades(sess, from_ts * 1000, to_ts * 1000)
@@ -429,13 +454,11 @@ def liquidations(sid: str, from_ts: int, to_ts: int,
 
 
 @app.get("/api/session/{sid}/vol_profile")
-def vol_profile(sid: str, from_ts: int, to_ts: int, buckets: int = 40) -> dict:
-    """Aggregate aggTrades inside [from_ts, to_ts] into a volume-by-price
-    histogram with taker-buy / taker-sell split per bucket."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def vol_profile(
+    sid: str, from_ts: int, to_ts: int, buckets: int = 40,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     buckets = max(8, min(120, buckets))
     try:
         df = _get_agg_trades(sess, from_ts * 1000, to_ts * 1000)
@@ -477,15 +500,11 @@ def vol_profile(sid: str, from_ts: int, to_ts: int, buckets: int = 40) -> dict:
 
 
 @app.get("/api/session/{sid}/cvd")
-def cvd(sid: str) -> dict:
-    """Per-candle OHLC of cumulative volume delta — taker buy minus taker sell,
-    with intra-candle min/max so the chart can render proper candlesticks.
-    Heavy on first call for a session (pulls aggTrades for the revealed range);
-    subsequent calls reuse the per-candle cache."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def cvd(
+    sid: str,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     with sess.lock:
         end_idx = sess.cursor
         if end_idx < 0:
@@ -508,7 +527,6 @@ def cvd(sid: str) -> dict:
                 signed = df["qty"].where(~df["is_buyer_maker"], -df["qty"]).astype("float64")
                 base_ms = min(missing) * 1000
                 bins = ((df["time_ms"].astype("int64") - base_ms) // tf_ms).astype("int64")
-                # group + compute candle-local cumulative OHLC stats
                 grouped = signed.groupby(bins)
                 stats = grouped.agg([
                     ("delta", "sum"),
@@ -546,27 +564,20 @@ def cvd(sid: str) -> dict:
 
 
 @app.get("/api/session/{sid}/recent_trades")
-def recent_trades(sid: str, n: int = 60) -> dict:
-    """Return the most recent N aggTrades up to (and including) the candle
-    currently revealed by the cursor. Used by the Time & Sales panel."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def recent_trades(
+    sid: str, n: int = 60,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     n = max(1, min(n, 500))
     tf_ms = TF_MS[sess.tf]
     if sess.is_live:
-        # Vision archive doesn't carry today, and _get_agg_trades returns empty
-        # for today to avoid burning the REST rate limit. Hit /aggTrades directly
-        # for the most recent prints so the tape lands right at 'now' — no gap
-        # between the last closed-candle prints and the live WS feed.
         try:
             df = fetch_rest_recent(sess.symbol, sess.market, limit=max(n, 200))
         except Exception as e:
             raise HTTPException(502, f"aggTrades fetch failed: {e}") from e
     else:
-        end_ms = sess.current_time() * 1000 + tf_ms             # end of cursor candle
-        # widen the lookback window if the symbol is illiquid — try up to ~10 candles
+        end_ms = sess.current_time() * 1000 + tf_ms
         for window_candles in (1, 3, 10):
             start_ms = end_ms - tf_ms * window_candles
             try:
@@ -603,15 +614,11 @@ class PushKlineReq(BaseModel):
 
 
 @app.post("/api/session/{sid}/push_ticks")
-def push_ticks(sid: str, req: PushTicksReq) -> dict:
-    """Frontend streams live aggTrades here (in live mode) so indicators that
-    aggregate aggTrades can see today's data. Each tick: {time_ms, price, qty,
-    is_buyer_maker}. We also invalidate CVD cache for the candles those ticks
-    touch so the running cumulative recomputes."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def push_ticks(
+    sid: str, req: PushTicksReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     if not sess.is_live:
         return {"buffered": 0, "changed": []}
     changed: list = []
@@ -623,7 +630,6 @@ def push_ticks(sid: str, req: PushTicksReq) -> dict:
             sess.live_aggtrades = [t for t in sess.live_aggtrades
                                    if int(t["time_ms"]) >= cutoff]
         tf_s = TF_MS[sess.tf] // 1000
-        # process each tick: invalidate CVD cache + run limit/SL/TP per tick
         for t in req.ticks:
             ms = int(t["time_ms"])
             price = float(t["price"])
@@ -633,6 +639,8 @@ def push_ticks(sid: str, req: PushTicksReq) -> dict:
                 if c.id not in seen:
                     seen.add(c.id); changed.append(c)
         mark = float(req.ticks[-1]["price"]) if req.ticks else sess.current_price()
+    if changed:
+        await save_snapshot(db, sess)
     return {
         "buffered": len(sess.live_aggtrades),
         "changed": [t.to_dict(mark) for t in changed],
@@ -640,19 +648,17 @@ def push_ticks(sid: str, req: PushTicksReq) -> dict:
 
 
 @app.post("/api/session/{sid}/push_kline")
-def push_kline(sid: str, req: PushKlineReq) -> dict:
-    """Frontend tells the backend about a newly-closed kline so indicator
-    endpoints can include it in their per-candle aggregation."""
-    try:
-        sess = store.get(sid)
-    except KeyError:
-        raise HTTPException(404, "session not found")
+async def push_kline(
+    sid: str, req: PushKlineReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
     if not sess.is_live:
         return {"appended": False}
     with sess.lock:
         last_time = int(sess.df["time"].iloc[-1]) if len(sess.df) else 0
         if req.time <= last_time:
-            return {"appended": False}      # already known or stale
+            return {"appended": False}
         new_row = pd.DataFrame([{
             "time": int(req.time),
             "open": float(req.open),
@@ -663,20 +669,36 @@ def push_kline(sid: str, req: PushKlineReq) -> dict:
         }])
         sess.df = pd.concat([sess.df, new_row], ignore_index=True)
         sess.cursor = len(sess.df) - 1
-        # the newly-closed candle's CVD should be (re)computed from buffered ticks
         sess.cvd_cache.pop(int(req.time), None)
+    await save_snapshot(db, sess)
     return {"appended": True, "cursor": sess.cursor}
 
 
 @app.delete("/api/session/{sid}")
-def delete_session(sid: str) -> dict:
+async def delete_session(
+    sid: str, user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    try:
+        sess = store.get(sid)
+        if sess.user_id is not None and sess.user_id != user.id:
+            raise HTTPException(404, "session not found")
+    except KeyError:
+        pass
     store.delete(sid)
+    await delete_snapshot(db, sid)
     return {"ok": True}
 
 
 @app.get("/")
-def index() -> FileResponse:
+async def index(user: User | None = Depends(current_user_optional)):
+    if user is None:
+        return RedirectResponse(url="/login", status_code=303)
     return FileResponse(FRONTEND / "index.html")
+
+
+@app.get("/login")
+def login_page() -> FileResponse:
+    return FileResponse(FRONTEND / "login.html")
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

@@ -103,6 +103,7 @@ class Session:
     end: str
     df: pd.DataFrame
     cursor: int                              # index of last FULLY revealed candle (0-based)
+    user_id: int | None = None               # owning user; None only in legacy / single-user mode
     trades: list[Trade] = field(default_factory=list)
     lock: RLock = field(default_factory=RLock)
     # tick-replay state: aggTrades for the FORMING candle (cursor+1), and how
@@ -272,6 +273,39 @@ class Session:
                 changed.append(t)
         return changed
 
+    def to_snapshot(self) -> dict:
+        """Serialize the parts of the session worth persisting. The kline df,
+        cvd cache, tick aggs, and live aggtrade buffer are all regenerable; we
+        only keep cursor + trades + identity + mode flags."""
+        return {
+            "v": 1,
+            "id": self.id,
+            "user_id": self.user_id,
+            "symbol": self.symbol,
+            "market": self.market,
+            "tf": self.tf,
+            "start": self.start,
+            "end": self.end,
+            "cursor": int(self.cursor),
+            "is_live": bool(self.is_live),
+            "trades": [t.to_dict() for t in self.trades],
+        }
+
+    def apply_snapshot(self, snap: dict) -> None:
+        """Restore mutable state from a snapshot. Caller is responsible for
+        rebuilding self.df (e.g. by re-fetching klines for the same range)
+        before calling this."""
+        self.cursor = int(snap.get("cursor", self.cursor))
+        if "is_live" in snap:
+            self.is_live = bool(snap["is_live"])
+        rebuilt = []
+        for d in snap.get("trades") or []:
+            t = _trade_from_dict(d)
+            if t is not None:
+                rebuilt.append(t)
+        self.trades = rebuilt
+        self.reset_tick_state()
+
     def process_candle(self) -> list[Trade]:
         """Fill pending limits, then trigger SL/TP. Returns trades whose state changed.
 
@@ -355,7 +389,8 @@ class SessionStore:
                start: str | None = None, end: str | None = None,
                warmup: int = 100, replay_ts: int | None = None,
                live: bool = False,
-               inherit_trades: list[dict] | None = None) -> Session:
+               inherit_trades: list[dict] | None = None,
+               user_id: int | None = None) -> Session:
         if live:
             # pull recent klines as warmup context; the frontend takes over
             # via Binance WS streams for live updates
@@ -396,7 +431,7 @@ class SessionStore:
         sid = secrets.token_hex(6)
         sess = Session(id=sid, symbol=symbol.upper(), market=market, tf=tf,
                        start=start or "", end=end or "",
-                       df=df, cursor=cursor, is_live=live)
+                       df=df, cursor=cursor, is_live=live, user_id=user_id)
         if inherit_trades:
             rebuilt = (_trade_from_dict(t) for t in inherit_trades)
             sess.trades = [t for t in rebuilt if t is not None]

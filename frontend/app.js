@@ -384,9 +384,14 @@
     const { signal, ...rest } = opts;
     const r = await fetch(path, {
       headers: { "content-type": "application/json" },
+      credentials: "include",
       signal,
       ...rest,
     });
+    if (r.status === 401 && !path.startsWith("/api/auth/")) {
+      window.location.href = "/login";
+      throw new Error("not authenticated");
+    }
     if (!r.ok) {
       let text = await r.text();
       try { text = JSON.parse(text).detail || text; } catch (_) {}
@@ -396,6 +401,24 @@
     }
     return r.json();
   };
+
+  // On boot, surface the logged-in user (or bounce to /login). Done in the
+  // background so the rest of the app can keep initializing.
+  (async () => {
+    try {
+      const me = await api("/api/auth/me");
+      const slot = document.querySelector("#user-info");
+      if (slot) slot.innerHTML = `<span class="user-email">${me.email}</span> · <a href="#" id="logout-link">Logout</a>`;
+      const logout = document.querySelector("#logout-link");
+      if (logout) logout.addEventListener("click", async (e) => {
+        e.preventDefault();
+        try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
+        window.location.href = "/login";
+      });
+    } catch (_) {
+      // api() already redirected on 401; nothing more to do.
+    }
+  })();
 
   // ---- Volume profile (aggTrade-bucketed, with buy/sell split per level)
   // Backend computes the profile for the currently-visible time range; we

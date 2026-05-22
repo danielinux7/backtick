@@ -21,6 +21,10 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
   opacity: 0; transition: opacity 0.15s;
 }
 #status:not(:empty) { opacity: 1; }
+.user-info { margin-left: auto; font-size: 12px; color: #a8b0bd; }
+.user-info .user-email { color: #d1d4dc; font-weight: 500; }
+.user-info a { color: #90caf9; text-decoration: none; }
+.user-info a:hover { text-decoration: underline; }
 .live-indicator { font-size: 11px; font-weight: 700; color: #81c784; letter-spacing: 0.5px;
   display: inline-flex; align-items: center; gap: 4px;
   animation: live-pulse 1.5s ease-in-out infinite; }

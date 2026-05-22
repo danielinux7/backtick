@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Sign in — Backtick</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='8' fill='%230f1218'/%3E%3Cg transform='rotate(40 20 20)'%3E%3Cline x1='20' y1='6' x2='20' y2='34' stroke='%2326a69a' stroke-width='2' stroke-linecap='round'/%3E%3Crect x='15' y='12' width='10' height='16' rx='2' fill='%2326a69a'/%3E%3C/g%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    body.auth { display: grid; place-items: center; min-height: 100svh; background: #0f1218; color: #e6e9ee; }
+    .auth-card { width: min(380px, 92vw); background: #161a22; border: 1px solid #232936; border-radius: 12px; padding: 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+    .auth-card h1 { margin: 0 0 6px; font-size: 22px; }
+    .auth-card .subtitle { margin: 0 0 18px; opacity: 0.7; font-size: 13px; }
+    .auth-card form { display: grid; gap: 10px; }
+    .auth-card input[type=email], .auth-card input[type=password] {
+      width: 100%; padding: 10px 12px; background: #0f1218; color: #e6e9ee;
+      border: 1px solid #2a3142; border-radius: 8px; font: inherit;
+    }
+    .auth-card button.primary {
+      padding: 10px 12px; background: #26a69a; color: #0f1218;
+      border: 0; border-radius: 8px; font-weight: 600; cursor: pointer;
+    }
+    .auth-card button.primary:hover { background: #34c5b8; }
+    .auth-card .divider { display: flex; align-items: center; gap: 12px; margin: 14px 0 8px; opacity: 0.6; font-size: 12px; }
+    .auth-card .divider::before, .auth-card .divider::after { content: ""; flex: 1; height: 1px; background: #232936; }
+    .auth-card .google-btn {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 10px; background: #fff; color: #1a1a1a; border-radius: 8px;
+      text-decoration: none; font-weight: 600; cursor: pointer; border: 0; font: inherit;
+    }
+    .auth-card .google-btn:hover { background: #f3f3f3; }
+    .auth-card .toggle { text-align: center; font-size: 13px; opacity: 0.75; margin-top: 12px; }
+    .auth-card .toggle a { color: #90caf9; }
+    .auth-card .error { color: #ef5350; font-size: 13px; min-height: 1em; }
+    .auth-card .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .auth-card .brand svg { width: 32px; height: 32px; }
+    .auth-card .brand span { font-weight: 600; }
+  </style>
+</head>
+<body class="auth">
+  <div class="auth-card">
+    <div class="brand">
+      <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect width="40" height="40" rx="8" fill="#0f1218"/>
+        <g transform="rotate(40 20 20)">
+          <line x1="20" y1="6" x2="20" y2="34" stroke="#26a69a" stroke-width="2" stroke-linecap="round"/>
+          <rect x="15" y="12" width="10" height="16" rx="2" fill="#26a69a"/>
+        </g>
+      </svg>
+      <span>Backtick</span>
+    </div>
+    <h1 id="title">Sign in</h1>
+    <p class="subtitle" id="subtitle">Welcome back. Pick up where you left off.</p>
+
+    <form id="auth-form">
+      <input type="email" id="email" placeholder="email" autocomplete="email" required />
+      <input type="password" id="password" placeholder="password (min 8 chars)" autocomplete="current-password" minlength="8" required />
+      <button type="submit" class="primary" id="submit-btn">Sign in</button>
+      <div class="error" id="err"></div>
+    </form>
+
+    <div class="divider">or</div>
+    <a class="google-btn" href="/api/auth/google/start">
+      <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.49h4.84a4.14 4.14 0 01-1.79 2.72v2.26h2.9c1.7-1.56 2.69-3.87 2.69-6.63z"/>
+        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.25c-.8.54-1.83.86-3.06.86-2.35 0-4.34-1.58-5.05-3.72H.96v2.33A9 9 0 009 18z"/>
+        <path fill="#FBBC05" d="M3.95 10.71A5.4 5.4 0 013.66 9c0-.59.1-1.17.29-1.71V4.96H.96A9 9 0 000 9c0 1.45.35 2.82.96 4.04l2.99-2.33z"/>
+        <path fill="#EA4335" d="M9 3.58c1.32 0 2.5.45 3.44 1.35l2.58-2.58A9 9 0 009 0 9 9 0 00.96 4.96l2.99 2.33C4.66 5.16 6.65 3.58 9 3.58z"/>
+      </svg>
+      Continue with Google
+    </a>
+
+    <div class="toggle">
+      <span id="toggle-prompt">No account?</span> <a href="#" id="toggle-link">Create one</a>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById("auth-form");
+    const email = document.getElementById("email");
+    const password = document.getElementById("password");
+    const submit = document.getElementById("submit-btn");
+    const errEl = document.getElementById("err");
+    const title = document.getElementById("title");
+    const subtitle = document.getElementById("subtitle");
+    const togglePrompt = document.getElementById("toggle-prompt");
+    const toggleLink = document.getElementById("toggle-link");
+
+    let mode = "login";
+    function render() {
+      if (mode === "login") {
+        title.textContent = "Sign in";
+        subtitle.textContent = "Welcome back. Pick up where you left off.";
+        submit.textContent = "Sign in";
+        password.setAttribute("autocomplete", "current-password");
+        togglePrompt.textContent = "No account?";
+        toggleLink.textContent = "Create one";
+      } else {
+        title.textContent = "Create account";
+        subtitle.textContent = "Start with email + password. You can link Google later.";
+        submit.textContent = "Create account";
+        password.setAttribute("autocomplete", "new-password");
+        togglePrompt.textContent = "Already have an account?";
+        toggleLink.textContent = "Sign in";
+      }
+    }
+    toggleLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      mode = mode === "login" ? "register" : "login";
+      errEl.textContent = "";
+      render();
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      errEl.textContent = "";
+      submit.disabled = true;
+      try {
+        const path = mode === "login" ? "/api/auth/login" : "/api/auth/register";
+        const r = await fetch(path, {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: email.value, password: password.value }),
+        });
+        if (!r.ok) {
+          let msg = await r.text();
+          try { msg = JSON.parse(msg).detail || msg; } catch (_) {}
+          throw new Error(msg);
+        }
+        window.location.href = "/";
+      } catch (err) {
+        errEl.textContent = err.message || "Something went wrong";
+      } finally {
+        submit.disabled = false;
+      }
+    });
+
+    render();
+  </script>
+</body>
+</html>
