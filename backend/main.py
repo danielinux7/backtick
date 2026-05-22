@@ -21,6 +21,7 @@ from .db import Base, engine, get_db
 from .models import User
 from .replay import SessionStore, Trade
 from .routes_auth import router as auth_router
+from .routes_symbols import router as symbols_router
 from .snapshots import delete_snapshot, hydrate_session, save_snapshot
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -47,6 +48,7 @@ async def _startup() -> None:
 
 
 app.include_router(auth_router)
+app.include_router(symbols_router)
 
 
 @app.middleware("http")

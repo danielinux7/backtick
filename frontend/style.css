@@ -25,6 +25,36 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .user-info .user-email { color: #d1d4dc; font-weight: 500; }
 .user-info a { color: #90caf9; text-decoration: none; }
 .user-info a:hover { text-decoration: underline; }
+
+.symbol-picker { position: relative; }
+.symbol-picker > input { min-width: 130px; }
+.symbol-popover {
+  position: absolute; top: calc(100% + 4px); left: 0;
+  width: 320px; max-height: 360px; overflow: auto;
+  background: #1e222d; color: #d1d4dc;
+  border: 1px solid #2a2e39; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  z-index: 200; padding: 6px;
+}
+.symbol-picker[hidden] { display: none; }
+.symbol-section + .symbol-section { margin-top: 8px; padding-top: 6px; border-top: 1px solid #2a2e39; }
+.symbol-section-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: #8a93a3; padding: 2px 6px; }
+.symbol-list { display: flex; flex-direction: column; gap: 2px; }
+.symbol-row { display: flex; align-items: center; gap: 4px; padding: 0 2px; }
+.symbol-row .symbol-pick {
+  flex: 1; text-align: left; background: transparent; color: #d1d4dc;
+  border: 1px solid transparent; border-radius: 4px;
+  padding: 4px 8px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.symbol-row .symbol-pick:hover { background: #2a2e39; border-color: #2a2e39; }
+.symbol-row .symbol-add, .symbol-row .symbol-del {
+  background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px;
+  width: 24px; height: 24px; cursor: pointer; padding: 0; font-size: 14px; line-height: 1;
+}
+.symbol-row .symbol-add:hover:not(:disabled) { background: #26a69a; color: #0f1218; border-color: #26a69a; }
+.symbol-row .symbol-del:hover { background: #ef5350; color: #fff; border-color: #ef5350; }
+.symbol-row .symbol-add:disabled { opacity: 0.6; cursor: default; }
+.symbol-empty { font-size: 11px; padding: 6px 8px; color: #8a93a3; }
 .live-indicator { font-size: 11px; font-weight: 700; color: #81c784; letter-spacing: 0.5px;
   display: inline-flex; align-items: center; gap: 4px;
   animation: live-pulse 1.5s ease-in-out infinite; }

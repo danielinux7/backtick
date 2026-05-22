@@ -27,7 +27,19 @@
         <option value="live" selected>Live</option>
         <option value="replay">Replay</option>
       </select>
-      <input name="symbol" placeholder="SOLUSDT" value="SOLUSDT" required />
+      <div class="symbol-picker" id="symbol-picker">
+        <input name="symbol" id="symbol-input" placeholder="SOLUSDT" value="SOLUSDT" autocomplete="off" required />
+        <div class="symbol-popover" id="symbol-popover" hidden>
+          <div class="symbol-section">
+            <div class="symbol-section-label">Watchlist</div>
+            <div class="symbol-list" id="watchlist-rows"><div class="symbol-empty">No saved symbols yet.</div></div>
+          </div>
+          <div class="symbol-section">
+            <div class="symbol-section-label">Search</div>
+            <div class="symbol-list" id="search-rows"><div class="symbol-empty">Type to search Binance…</div></div>
+          </div>
+        </div>
+      </div>
       <select name="market">
         <option value="spot">spot</option>
         <option value="futures">futures</option>
@@ -175,5 +187,6 @@
   </main>
 
   <script src="/static/app.js"></script>
+  <script src="/static/symbol-picker.js"></script>
 </body>
 </html>
