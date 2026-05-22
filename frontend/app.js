@@ -407,48 +407,59 @@
     return r.json();
   };
 
-  // On boot, surface the logged-in user (or bounce to /login). Done in the
-  // background so the rest of the app can keep initializing.
-  (async () => {
+  // Render the header user-info slot from /api/auth/me. Called once on boot
+  // and again whenever auth state changes (after the modal closes, etc.).
+  async function renderUserInfo() {
+    const slot = document.querySelector("#user-info");
+    if (!slot) return;
+    let me;
     try {
-      const me = await api("/api/auth/me");
-      const slot = document.querySelector("#user-info");
-      if (!slot) return;
-      // Build via DOM, not innerHTML — OAuth emails come from Google and
-      // bypass our regex validation, so don't interpolate them as HTML.
-      slot.textContent = "";
-      if (me.is_guest) {
-        const tag = document.createElement("span");
-        tag.className = "user-email";
-        tag.textContent = "Guest";
-        tag.title = "You're using the app anonymously. Sign in or sign up to save your trades + watchlist past this browser.";
-        slot.appendChild(tag);
-        slot.appendChild(document.createTextNode(" · "));
-        const loginLink = document.createElement("a");
-        loginLink.href = "/login";
-        loginLink.textContent = "Login / Sign up";
-        slot.appendChild(loginLink);
-        return;
-      }
-      const emailSpan = document.createElement("span");
-      emailSpan.className = "user-email";
-      emailSpan.textContent = me.email;
-      slot.appendChild(emailSpan);
+      me = await api("/api/auth/me");
+    } catch (_) { return; /* api() redirected on 401 */ }
+    // Build via DOM, not innerHTML — OAuth emails skip our regex validation,
+    // so don't interpolate them as HTML.
+    slot.textContent = "";
+    if (me.is_guest) {
+      const tag = document.createElement("span");
+      tag.className = "user-email";
+      tag.textContent = "Guest";
+      tag.title = "You're using the app anonymously. Sign in or sign up to save your trades + watchlist past this browser.";
+      slot.appendChild(tag);
       slot.appendChild(document.createTextNode(" · "));
-      const logoutLink = document.createElement("a");
-      logoutLink.href = "#";
-      logoutLink.id = "logout-link";
-      logoutLink.textContent = "Logout";
-      slot.appendChild(logoutLink);
-      logoutLink.addEventListener("click", async (e) => {
-        e.preventDefault();
-        try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
-        window.location.href = "/login";
+      const loginLink = document.createElement("a");
+      loginLink.href = "/login";
+      loginLink.textContent = "Login / Sign up";
+      // Prefer the modal; fall back to /login navigation if for some reason
+      // auth-modal.js didn't load (script blocker, offline, etc.).
+      loginLink.addEventListener("click", (e) => {
+        if (typeof window.openAuthModal === "function") {
+          e.preventDefault();
+          window.openAuthModal("login");
+        }
       });
-    } catch (_) {
-      // api() already redirected on 401; nothing more to do.
+      slot.appendChild(loginLink);
+      return;
     }
-  })();
+    const emailSpan = document.createElement("span");
+    emailSpan.className = "user-email";
+    emailSpan.textContent = me.email;
+    slot.appendChild(emailSpan);
+    slot.appendChild(document.createTextNode(" · "));
+    const logoutLink = document.createElement("a");
+    logoutLink.href = "#";
+    logoutLink.id = "logout-link";
+    logoutLink.textContent = "Logout";
+    slot.appendChild(logoutLink);
+    logoutLink.addEventListener("click", async (e) => {
+      e.preventDefault();
+      try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
+      // Logging out drops the cookie; reload so the / route auto-provisions
+      // a fresh guest and the header rerenders as guest.
+      window.location.href = "/";
+    });
+  }
+  renderUserInfo();
+  window.addEventListener("auth:changed", () => renderUserInfo());
 
   // ---- Volume profile (aggTrade-bucketed, with buy/sell split per level)
   // Backend computes the profile for the currently-visible time range; we

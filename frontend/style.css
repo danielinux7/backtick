@@ -23,8 +23,83 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 #status:not(:empty) { opacity: 1; }
 .user-info { margin-left: auto; font-size: 12px; color: #a8b0bd; }
 .user-info .user-email { color: #d1d4dc; font-weight: 500; }
-.user-info a { color: #90caf9; text-decoration: none; }
+.user-info a { color: #90caf9; text-decoration: none; cursor: pointer; }
 .user-info a:hover { text-decoration: underline; }
+
+/* ---------- Auth modal (overlay on top of the chart) ----------
+   Uses the same auth-card styles as /login. The backdrop dims the chart
+   behind, and clicking the backdrop or pressing Escape closes the modal. */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(7, 9, 13, 0.78);
+  display: grid; place-items: center;
+  z-index: 2000;
+  padding: 20px;
+  padding-top: max(20px, env(safe-area-inset-top));
+  padding-bottom: max(20px, env(safe-area-inset-bottom));
+  backdrop-filter: blur(2px);
+  animation: modal-fade 0.15s ease-out;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal-card {
+  position: relative;
+  width: min(380px, 100%);
+  background: #161a22;
+  color: #e6e9ee;
+  border: 1px solid #232936;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  animation: modal-pop 0.15s ease-out;
+}
+.modal-close {
+  position: absolute; top: 6px; right: 8px;
+  background: none; border: 0; color: #d1d4dc;
+  font-size: 26px; line-height: 1;
+  cursor: pointer; padding: 4px 10px;
+  opacity: 0.55;
+}
+.modal-close:hover { opacity: 1; }
+
+/* The auth form pieces (same layout as /login). */
+.modal-card .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.modal-card .brand svg { width: 32px; height: 32px; }
+.modal-card .brand span { font-weight: 600; color: #e6e9ee; }
+.modal-card h1 { margin: 0 0 6px; font-size: 22px; }
+.modal-card .subtitle { margin: 0 0 18px; opacity: 0.7; font-size: 13px; }
+.modal-card form { display: grid; gap: 10px; }
+.modal-card input[type=email],
+.modal-card input[type=password] {
+  width: 100%; padding: 10px 12px;
+  background: #0f1218; color: #e6e9ee;
+  border: 1px solid #2a3142; border-radius: 8px;
+  font: inherit;
+}
+.modal-card button.primary {
+  padding: 10px 12px; background: #26a69a; color: #0f1218;
+  border: 0; border-radius: 8px; font-weight: 600; cursor: pointer;
+}
+.modal-card button.primary:hover { background: #34c5b8; }
+.modal-card .divider {
+  display: flex; align-items: center; gap: 12px;
+  margin: 14px 0 8px; opacity: 0.6; font-size: 12px;
+}
+.modal-card .divider::before, .modal-card .divider::after {
+  content: ""; flex: 1; height: 1px; background: #232936;
+}
+.modal-card .google-btn {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 10px; background: #fff; color: #1a1a1a; border-radius: 8px;
+  text-decoration: none; font-weight: 600; cursor: pointer; border: 0; font: inherit;
+}
+.modal-card .google-btn:hover { background: #f3f3f3; }
+.modal-card .toggle { text-align: center; font-size: 13px; opacity: 0.75; margin-top: 12px; }
+.modal-card .toggle a { color: #90caf9; cursor: pointer; }
+.modal-card .error { color: #ef5350; font-size: 13px; min-height: 1em; }
+
+@keyframes modal-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-pop  { from { transform: translateY(8px); opacity: 0; }
+                         to { transform: translateY(0);    opacity: 1; } }
 
 .symbol-picker { position: relative; }
 .symbol-picker > input { min-width: 130px; }
