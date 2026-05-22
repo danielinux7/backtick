@@ -27,6 +27,6 @@ services:
 
 databases:
   - name: backtick-db
-    plan: starter
+    plan: basic-256mb
     databaseName: backtick
     user: backtick
