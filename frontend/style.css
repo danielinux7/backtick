@@ -66,6 +66,68 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .live-mode .setup button[type=submit] { display: none !important; }
 
 main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
+.drawer-toggle { display: none; background: none; border: 0; color: inherit; font: inherit; }
+
+/* ---------- Responsive layout (Android Chrome + iOS Safari) ----------
+   Below 900px: stack the chart and the side pane vertically, with the side
+   pane collapsing into a draggable bottom drawer that the user expands to
+   place trades / see the tape. Above 900px we keep the existing two-column
+   desktop layout untouched. */
+@media (max-width: 900px) {
+  html, body { overflow: auto; }
+  main {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+    height: calc(100svh - 96px);
+  }
+  header {
+    padding: 6px 8px;
+    padding-top: max(6px, env(safe-area-inset-top));
+    gap: 8px;
+  }
+  .setup { gap: 4px; }
+  .setup select, .setup input, .setup button { font-size: 12px; padding: 6px 8px; min-height: 36px; }
+  .setup input[name="warmup"] { width: 64px !important; }
+  .symbol-popover { width: min(92vw, 360px); max-height: 50vh; }
+  .user-info { width: 100%; order: 99; padding-top: 4px; border-top: 1px solid #1e222d; }
+
+  .side-pane {
+    border-top: 1px solid #1e222d;
+    max-height: 50vh;
+    overflow-y: auto;
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+  .side-pane[data-collapsed="true"] { max-height: 56px; overflow: hidden; }
+  .side-pane .drawer-toggle {
+    position: sticky; top: 0; width: 100%;
+    display: flex; align-items: center; justify-content: space-between;
+    background: #0f1218; border-bottom: 1px solid #1e222d;
+    padding: 8px 12px; font-size: 13px; font-weight: 600;
+    color: #d1d4dc;
+    cursor: pointer; user-select: none; z-index: 5;
+    min-height: 44px;
+  }
+  .side-pane .drawer-toggle::after { content: "▾"; font-size: 11px; opacity: 0.7; }
+  .side-pane[data-collapsed="true"] .drawer-toggle::after { transform: rotate(180deg); }
+
+  /* Touch-friendly hit targets */
+  button, .pick, .tool { min-height: 36px; }
+  .controls-center button { min-width: 64px; padding: 8px 12px; }
+  .chart-toolbar { flex-wrap: wrap; }
+
+  /* Chart container should never lose touch gestures to native scroll */
+  #chart, #rsi-chart, #cvd-chart { touch-action: none; }
+
+  .drawer-toggle { display: flex; }
+}
+
+/* Use 100svh on mobile to avoid the iOS Safari viewport jump when the URL
+   bar shrinks. */
+@supports (height: 100svh) {
+  @media (max-width: 900px) {
+    main { height: calc(100svh - 96px); }
+  }
+}
 
 .chart-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .chart-toolbar { display: flex; gap: 6px; padding: 4px 8px; background: #0f1218; border-bottom: 1px solid #1e222d; align-items: center; flex-shrink: 0; font-size: 12px; }

@@ -714,4 +714,24 @@ def login_page() -> FileResponse:
     return FileResponse(FRONTEND / "login.html")
 
 
+# Service workers can only intercept requests inside their served scope, so
+# /sw.js MUST live at the site root, not under /static. Same for the manifest
+# (so iOS Safari + Android Chrome find it from a normalized path).
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return FileResponse(
+        FRONTEND / "sw.js",
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-store, must-revalidate", "Service-Worker-Allowed": "/"},
+    )
+
+
+@app.get("/manifest.webmanifest")
+def manifest() -> FileResponse:
+    return FileResponse(
+        FRONTEND / "manifest.webmanifest",
+        media_type="application/manifest+json",
+    )
+
+
 app.mount("/static", StaticFiles(directory=FRONTEND), name="static")

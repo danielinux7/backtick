@@ -141,12 +141,15 @@
   showRsi(false);
   showCvd(false);
 
-  // wire the drag handles — pulling up enlarges the sub-pane
+  // wire the drag handles — pulling up enlarges the sub-pane. Uses pointer
+  // events so touch on Android/iOS works the same as mouse on desktop.
   const wireResize = (targetKey, targetEl) => {
     const handle = document.querySelector(`.pane-resize[data-target="${targetKey}"]`);
     if (!handle) return;
-    handle.addEventListener("mousedown", (e) => {
+    handle.style.touchAction = "none";
+    handle.addEventListener("pointerdown", (e) => {
       e.preventDefault();
+      handle.setPointerCapture?.(e.pointerId);
       const startY = e.clientY;
       const startH = targetEl.getBoundingClientRect().height;
       const onMove = (ev) => {
@@ -155,12 +158,14 @@
         targetEl.style.height = newH + "px";
       };
       const onUp = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+        handle.removeEventListener("pointercancel", onUp);
         document.body.style.cursor = "";
       };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+      handle.addEventListener("pointercancel", onUp);
       document.body.style.cursor = "ns-resize";
     });
   };
