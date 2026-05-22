@@ -3,6 +3,7 @@ services:
     name: backtick
     runtime: python
     plan: free
+    region: frankfurt
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /healthz
@@ -24,5 +25,6 @@ services:
 databases:
   - name: backtick-db
     plan: free
+    region: frankfurt
     databaseName: backtick
     user: backtick
