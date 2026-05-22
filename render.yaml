@@ -4,7 +4,7 @@ services:
     runtime: python
     plan: free
     region: frankfurt
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && python scripts/bump_sw_version.py
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /healthz
     autoDeploy: true
