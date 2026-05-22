@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .auth import (
     COOKIE_NAME,
     _cookie_kwargs,
+    create_guest,
     create_session_token,
     current_user,
     hash_password,
+    is_guest,
     is_production,
     revoke_session_token,
     upsert_oauth_user,
@@ -29,11 +31,6 @@ from .models import SessionToken, User
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-GUEST_EMAIL_SUFFIX = "@guest.local"
-
-
-def _is_guest(user: User) -> bool:
-    return bool(user.email and user.email.endswith(GUEST_EMAIL_SUFFIX))
 
 
 class RegisterReq(BaseModel):
@@ -88,7 +85,7 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)) -> JSONRe
 
 @router.get("/me")
 async def me(user: User = Depends(current_user)) -> dict:
-    guest = _is_guest(user)
+    guest = is_guest(user)
     return {
         "id": user.id,
         # Hide the synthetic guest-XXXX@guest.local email from the UI.
@@ -104,18 +101,9 @@ async def guest(db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """Start an anonymous session with a fresh User row. The user can later
     convert this row into a real account via /api/auth/upgrade without losing
     their trades, watchlist, or persisted replay snapshots."""
-    token = secrets.token_hex(6)
-    email = f"guest-{token}{GUEST_EMAIL_SUFFIX}"
-    # We still set a password hash so the row is internally consistent; nobody
-    # can ever log in to a guest by password (the email is unguessable and not
-    # surfaced via /me).
-    user = User(email=email, password_hash=hash_password(secrets.token_hex(16)))
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    session_token, _ = await create_session_token(db, user.id)
+    user, token = await create_guest(db)
     resp = JSONResponse({"id": user.id, "is_guest": True})
-    resp.set_cookie(value=session_token, **_cookie_kwargs(secure=is_production()))
+    resp.set_cookie(value=token, **_cookie_kwargs(secure=is_production()))
     return resp
 
 
@@ -127,7 +115,7 @@ async def upgrade(
 ) -> JSONResponse:
     """Convert the current guest account into a permanent one. Same user_id,
     so all existing snapshots / watchlist / trades carry over."""
-    if not _is_guest(user):
+    if not is_guest(user):
         raise HTTPException(400, "already a permanent account")
     email = req.email.lower().strip()
     if not _EMAIL_RE.match(email):
@@ -196,7 +184,7 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
         tok = await db.get(SessionToken, existing_cookie)
         if tok is not None:
             current = await db.get(User, tok.user_id)
-            if current is not None and _is_guest(current):
+            if current is not None and is_guest(current):
                 claimed_by_sub = (await db.execute(
                     select(User).where(User.google_sub == sub, User.id != current.id)
                 )).scalar_one_or_none()

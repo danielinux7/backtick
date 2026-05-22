@@ -102,8 +102,14 @@
     const togglePrompt = document.getElementById("toggle-prompt");
     const toggleLink = document.getElementById("toggle-link");
 
-    // ?upgrade=1 means we already have a guest cookie and the user wants
-    // to convert it into a permanent account (same user_id, all data kept).
+    // Detect whether the visitor already has a guest cookie. If so:
+    //  - hide the "Continue as guest" button (would orphan their data)
+    //  - the register flow auto-routes to /api/auth/upgrade so they keep
+    //    their trades + watchlist when they create their permanent account
+    let isCurrentlyGuest = false;
+    let guestDetectionDone = false;
+
+    // ?upgrade=1 forces upgrade mode explicitly (e.g. from the header link).
     const params = new URLSearchParams(window.location.search);
     const isUpgrade = params.get("upgrade") === "1";
 
@@ -151,9 +157,13 @@
       errEl.textContent = "";
       submit.disabled = true;
       try {
+        // Register-from-guest silently routes to /upgrade so the same user
+        // row is reused — keeps trades, watchlist, and replay snapshots.
+        const effectiveMode =
+          mode === "register" && isCurrentlyGuest ? "upgrade" : mode;
         const path =
-          mode === "login" ? "/api/auth/login" :
-          mode === "register" ? "/api/auth/register" :
+          effectiveMode === "login" ? "/api/auth/login" :
+          effectiveMode === "register" ? "/api/auth/register" :
           "/api/auth/upgrade";
         const r = await fetch(path, {
           method: "POST",
@@ -191,6 +201,30 @@
         errEl.textContent = err.message || "Could not start guest session";
       }
     });
+
+    // Detect current guest cookie, then hide the now-redundant button and
+    // tweak the copy so creating an account is clearly "save what I'm
+    // already doing" rather than "start over."
+    (async () => {
+      try {
+        const r = await fetch("/api/auth/me", { credentials: "include" });
+        if (r.ok) {
+          const me = await r.json();
+          isCurrentlyGuest = !!me.is_guest;
+        }
+      } catch (_) { /* not authed — leave defaults */ }
+      guestDetectionDone = true;
+      if (isCurrentlyGuest) {
+        const g = document.getElementById("guest-btn");
+        const d = document.getElementById("guest-divider");
+        if (g) g.style.display = "none";
+        if (d) d.style.display = "none";
+        // Soft hint for register mode (visible after they click "Create one")
+        if (mode === "register" || mode === "upgrade") {
+          subtitle.textContent = "Add an email + password to keep your trades + watchlist past this browser.";
+        }
+      }
+    })();
 
     render();
   </script>

@@ -15,9 +15,14 @@ from .models import SessionToken, User
 
 COOKIE_NAME = "auth"
 SESSION_DAYS = 30
+GUEST_EMAIL_SUFFIX = "@guest.local"
 # bcrypt only hashes the first 72 bytes; cap up front so longer passwords don't
 # silently truncate to the same hash as a shorter prefix.
 _BCRYPT_MAX = 72
+
+
+def is_guest(user: "User | None") -> bool:
+    return bool(user and user.email and user.email.endswith(GUEST_EMAIL_SUFFIX))
 
 
 def _to_b(s: str) -> bytes:
@@ -108,6 +113,22 @@ def _cookie_kwargs(secure: bool) -> dict:
 
 def is_production() -> bool:
     return os.environ.get("RENDER", "").lower() in {"1", "true"} or os.environ.get("ENV", "") == "production"
+
+
+async def create_guest(db: AsyncSession) -> tuple[User, str]:
+    """Create an anonymous User + opaque session token. Used by /api/auth/guest
+    and by the / landing route to auto-provision a visitor so the chart loads
+    immediately, no login wall. The synthetic email is unguessable; the random
+    password hash makes the row internally consistent but unloginable by
+    password (the user can later convert via /api/auth/upgrade)."""
+    seed = secrets.token_hex(6)
+    email = f"guest-{seed}{GUEST_EMAIL_SUFFIX}"
+    user = User(email=email, password_hash=hash_password(secrets.token_hex(16)))
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    token, _ = await create_session_token(db, user.id)
+    return user, token
 
 
 async def upsert_oauth_user(db: AsyncSession, email: str, google_sub: str) -> User:

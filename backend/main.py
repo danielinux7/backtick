@@ -8,14 +8,14 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
 from .aggtrades import fetch_agg_trades, fetch_rest_recent
-from .auth import current_user, current_user_optional
+from .auth import _cookie_kwargs, create_guest, current_user, current_user_optional, is_production
 from .binance import TF_MS, VALID_TFS, fetch_klines
 from .db import Base, engine, get_db
 from .models import User
@@ -711,10 +711,18 @@ async def delete_session(
 
 
 @app.get("/")
-async def index(user: User | None = Depends(current_user_optional)):
+async def index(
+    user: User | None = Depends(current_user_optional),
+    db: AsyncSession = Depends(get_db),
+):
+    """Chart-first landing: no auth wall. If the visitor has no auth cookie,
+    auto-create an anonymous guest user so they can immediately try the app.
+    They can sign in or sign up later via the header link."""
+    resp = FileResponse(FRONTEND / "index.html")
     if user is None:
-        return RedirectResponse(url="/login", status_code=303)
-    return FileResponse(FRONTEND / "index.html")
+        _, token = await create_guest(db)
+        resp.set_cookie(value=token, **_cookie_kwargs(secure=is_production()))
+    return resp
 
 
 @app.get("/login")

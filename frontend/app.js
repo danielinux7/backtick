@@ -421,24 +421,13 @@
         const tag = document.createElement("span");
         tag.className = "user-email";
         tag.textContent = "Guest";
+        tag.title = "You're using the app anonymously. Sign in or sign up to save your trades + watchlist past this browser.";
         slot.appendChild(tag);
         slot.appendChild(document.createTextNode(" · "));
-        const signupLink = document.createElement("a");
-        signupLink.href = "/login?upgrade=1";
-        signupLink.textContent = "Sign up to keep your data";
-        slot.appendChild(signupLink);
-        slot.appendChild(document.createTextNode(" · "));
-        const logoutLink = document.createElement("a");
-        logoutLink.href = "#";
-        logoutLink.textContent = "Reset";
-        logoutLink.title = "Clear this guest session (your data will no longer be reachable from this browser)";
-        slot.appendChild(logoutLink);
-        logoutLink.addEventListener("click", async (e) => {
-          e.preventDefault();
-          if (!confirm("Reset will detach this guest session from your browser. Trades and watchlist will no longer be reachable. Continue?")) return;
-          try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
-          window.location.href = "/login";
-        });
+        const loginLink = document.createElement("a");
+        loginLink.href = "/login";
+        loginLink.textContent = "Login / Sign up";
+        slot.appendChild(loginLink);
         return;
       }
       const emailSpan = document.createElement("span");
