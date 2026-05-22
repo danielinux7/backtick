@@ -407,8 +407,32 @@
     return r.json();
   };
 
-  // Render the header user-info slot from /api/auth/me. Called once on boot
-  // and again whenever auth state changes (after the modal closes, etc.).
+  // Header avatar + dropdown menu. The avatar shows the user's first letter
+  // (or a person glyph for guests); clicking it opens a small menu with the
+  // email and the relevant actions (Login / Sign up vs Logout). Outside-click
+  // and Escape both close the menu.
+  function openUserMenu(menu) {
+    menu.hidden = false;
+    const onDocClick = (e) => {
+      if (!menu.contains(e.target) && !e.target.closest(".user-avatar")) {
+        closeUserMenu(menu);
+      }
+    };
+    const onKey = (e) => { if (e.key === "Escape") closeUserMenu(menu); };
+    menu._cleanup = () => {
+      document.removeEventListener("click", onDocClick, true);
+      document.removeEventListener("keydown", onKey);
+    };
+    setTimeout(() => {
+      document.addEventListener("click", onDocClick, true);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+  }
+  function closeUserMenu(menu) {
+    menu.hidden = true;
+    if (menu._cleanup) { menu._cleanup(); menu._cleanup = null; }
+  }
+
   async function renderUserInfo() {
     const slot = document.querySelector("#user-info");
     if (!slot) return;
@@ -416,47 +440,79 @@
     try {
       me = await api("/api/auth/me");
     } catch (_) { return; /* api() redirected on 401 */ }
+
     // Build via DOM, not innerHTML — OAuth emails skip our regex validation,
     // so don't interpolate them as HTML.
     slot.textContent = "";
-    if (me.is_guest) {
-      const tag = document.createElement("span");
-      tag.className = "user-email";
-      tag.textContent = "Guest";
-      tag.title = "You're using the app anonymously. Sign in or sign up to save your trades + watchlist past this browser.";
-      slot.appendChild(tag);
-      slot.appendChild(document.createTextNode(" · "));
-      const loginLink = document.createElement("a");
-      loginLink.href = "/login";
-      loginLink.textContent = "Login / Sign up";
-      // Prefer the modal; fall back to /login navigation if for some reason
-      // auth-modal.js didn't load (script blocker, offline, etc.).
-      loginLink.addEventListener("click", (e) => {
-        if (typeof window.openAuthModal === "function") {
-          e.preventDefault();
-          window.openAuthModal("login");
-        }
-      });
-      slot.appendChild(loginLink);
-      return;
+
+    const guest = !!me.is_guest;
+    const initial = guest ? "" : (me.email || "?").trim().charAt(0).toUpperCase();
+
+    const avatar = document.createElement("button");
+    avatar.type = "button";
+    avatar.className = "user-avatar" + (guest ? " is-guest" : "");
+    avatar.setAttribute("aria-label", guest ? "Guest menu" : `Account menu for ${me.email}`);
+    avatar.setAttribute("aria-haspopup", "true");
+    if (guest) {
+      // Person-silhouette glyph for anonymous visitors
+      avatar.innerHTML =
+        '<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">' +
+        '<path fill="currentColor" d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-3.3 0-8 1.7-8 5v1h16v-1c0-3.3-4.7-5-8-5z"/>' +
+        '</svg>';
+    } else {
+      avatar.textContent = initial;
     }
-    const emailSpan = document.createElement("span");
-    emailSpan.className = "user-email";
-    emailSpan.textContent = me.email;
-    slot.appendChild(emailSpan);
-    slot.appendChild(document.createTextNode(" · "));
-    const logoutLink = document.createElement("a");
-    logoutLink.href = "#";
-    logoutLink.id = "logout-link";
-    logoutLink.textContent = "Logout";
-    slot.appendChild(logoutLink);
-    logoutLink.addEventListener("click", async (e) => {
-      e.preventDefault();
-      try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
-      // Logging out drops the cookie; reload so the / route auto-provisions
-      // a fresh guest and the header rerenders as guest.
-      window.location.href = "/";
+
+    const menu = document.createElement("div");
+    menu.className = "user-menu";
+    menu.hidden = true;
+    menu.setAttribute("role", "menu");
+
+    const label = document.createElement("div");
+    label.className = "user-menu-label";
+    label.textContent = guest ? "Guest" : me.email;
+    if (guest) {
+      label.title = "Anonymous session. Trades and watchlist are saved on the server but only reachable from this browser.";
+    }
+    menu.appendChild(label);
+
+    if (guest) {
+      const sub = document.createElement("div");
+      sub.className = "user-menu-hint";
+      sub.textContent = "Sign in or sign up to keep your data past this browser.";
+      menu.appendChild(sub);
+      const login = document.createElement("button");
+      login.type = "button";
+      login.className = "user-menu-item primary-item";
+      login.textContent = "Login / Sign up";
+      login.addEventListener("click", () => {
+        closeUserMenu(menu);
+        if (typeof window.openAuthModal === "function") window.openAuthModal("login");
+        else window.location.href = "/login";
+      });
+      menu.appendChild(login);
+    } else {
+      const logout = document.createElement("button");
+      logout.type = "button";
+      logout.className = "user-menu-item";
+      logout.textContent = "Logout";
+      logout.addEventListener("click", async () => {
+        closeUserMenu(menu);
+        try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
+        // Drop the cookie + back to /, which auto-provisions a fresh guest.
+        window.location.href = "/";
+      });
+      menu.appendChild(logout);
+    }
+
+    avatar.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (menu.hidden) openUserMenu(menu);
+      else closeUserMenu(menu);
     });
+
+    slot.appendChild(avatar);
+    slot.appendChild(menu);
   }
   renderUserInfo();
   window.addEventListener("auth:changed", () => renderUserInfo());
