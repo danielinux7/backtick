@@ -2,31 +2,27 @@ services:
   - type: web
     name: backtick
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
-      - key: DATA_CACHE_DIR
-        value: /var/data
       - key: PYTHON_VERSION
         value: "3.11"
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: backtick-db
+          property: connectionString
       - key: SESSION_SECRET
         generateValue: true
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 10
 
 databases:
   - name: backtick-db
-    plan: basic-256mb
+    plan: free
     databaseName: backtick
     user: backtick
