@@ -152,7 +152,15 @@ def healthz() -> dict:
 
 @app.get("/api/timeframes")
 def timeframes() -> dict:
-    return {"timeframes": sorted(VALID_TFS, key=lambda x: (x[-1], int(x[:-1])))}
+    # Sort by actual duration (minutes ascending) so the dropdown reads
+    # 1m, 3m, 5m, … 1h, 2h, 4h, … 1d, 3d, 1w — not letter-first.
+    unit_minutes = {"m": 1, "h": 60, "d": 60 * 24, "w": 60 * 24 * 7}
+    return {
+        "timeframes": sorted(
+            VALID_TFS,
+            key=lambda x: int(x[:-1]) * unit_minutes.get(x[-1], 0),
+        )
+    }
 
 
 @app.post("/api/session")

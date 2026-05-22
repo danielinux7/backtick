@@ -11,10 +11,13 @@ const SHELL = [
   "/static/style.css",
   "/static/app.js",
   "/static/symbol-picker.js",
+  "/static/pwa.js",
   "/manifest.webmanifest",
   "/static/icons/icon-192.png",
   "/static/icons/icon-512.png",
+  "/static/icons/icon-maskable-512.png",
   "/static/icons/apple-touch-icon.png",
+  "/static/icons/favicon-32.png",
 ];
 
 self.addEventListener("install", (event) => {
