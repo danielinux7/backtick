@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import os
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -17,7 +18,9 @@ import httpx
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
-CACHE = ROOT / "data_cache" / "aggtrades"
+_DEFAULT_CACHE = ROOT / "data_cache"
+_CACHE_ROOT = Path(os.environ.get("DATA_CACHE_DIR", str(_DEFAULT_CACHE)))
+CACHE = _CACHE_ROOT / "aggtrades"
 CACHE.mkdir(parents=True, exist_ok=True)
 
 # binance.vision CSV columns (no header row in current dumps)

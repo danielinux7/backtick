@@ -1,6 +1,7 @@
 """Fetch historical klines from Binance public REST with a local parquet cache."""
 from __future__ import annotations
 
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,8 +13,9 @@ import pandas as pd
 SPOT_BASE = "https://api.binance.com"
 FUTURES_BASE = "https://fapi.binance.com"
 
-CACHE_DIR = Path(__file__).resolve().parent.parent / "data_cache"
-CACHE_DIR.mkdir(exist_ok=True)
+_DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data_cache"
+CACHE_DIR = Path(os.environ.get("DATA_CACHE_DIR", str(_DEFAULT_CACHE)))
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 VALID_TFS = {"1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w"}
 

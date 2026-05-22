@@ -109,6 +109,11 @@ def _serialize_session(sess) -> dict:
     }
 
 
+@app.get("/healthz")
+def healthz() -> dict:
+    return {"ok": True}
+
+
 @app.get("/api/timeframes")
 def timeframes() -> dict:
     return {"timeframes": sorted(VALID_TFS, key=lambda x: (x[-1], int(x[:-1])))}
