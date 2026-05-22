@@ -80,6 +80,15 @@
     <div class="toggle">
       <span id="toggle-prompt">No account?</span> <a href="#" id="toggle-link">Create one</a>
     </div>
+
+    <div class="divider" id="guest-divider">or</div>
+    <button type="button" class="google-btn" id="guest-btn"
+            style="background:#2a3142;color:#d1d4dc;">
+      Continue as guest
+    </button>
+    <div class="toggle" style="margin-top:6px;font-size:11px;opacity:0.55;">
+      Trades + watchlist are saved on the server. Add an email + password any time to keep them past your browser session.
+    </div>
   </div>
 
   <script>
@@ -93,8 +102,27 @@
     const togglePrompt = document.getElementById("toggle-prompt");
     const toggleLink = document.getElementById("toggle-link");
 
-    let mode = "login";
+    // ?upgrade=1 means we already have a guest cookie and the user wants
+    // to convert it into a permanent account (same user_id, all data kept).
+    const params = new URLSearchParams(window.location.search);
+    const isUpgrade = params.get("upgrade") === "1";
+
+    let mode = isUpgrade ? "upgrade" : "login";
     function render() {
+      const guestDivider = document.getElementById("guest-divider");
+      const guestBtn = document.getElementById("guest-btn");
+      if (mode === "upgrade") {
+        title.textContent = "Save your account";
+        subtitle.textContent = "Add an email + password to keep your trades + watchlist past this browser session.";
+        submit.textContent = "Save account";
+        password.setAttribute("autocomplete", "new-password");
+        togglePrompt.textContent = "";
+        toggleLink.textContent = "";
+        // Hide guest button in upgrade mode — they already are a guest.
+        if (guestDivider) guestDivider.style.display = "none";
+        if (guestBtn) guestBtn.style.display = "none";
+        return;
+      }
       if (mode === "login") {
         title.textContent = "Sign in";
         subtitle.textContent = "Welcome back. Pick up where you left off.";
@@ -123,7 +151,10 @@
       errEl.textContent = "";
       submit.disabled = true;
       try {
-        const path = mode === "login" ? "/api/auth/login" : "/api/auth/register";
+        const path =
+          mode === "login" ? "/api/auth/login" :
+          mode === "register" ? "/api/auth/register" :
+          "/api/auth/upgrade";
         const r = await fetch(path, {
           method: "POST",
           credentials: "include",
@@ -140,6 +171,24 @@
         errEl.textContent = err.message || "Something went wrong";
       } finally {
         submit.disabled = false;
+      }
+    });
+
+    document.getElementById("guest-btn").addEventListener("click", async () => {
+      errEl.textContent = "";
+      try {
+        const r = await fetch("/api/auth/guest", {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!r.ok) {
+          let msg = await r.text();
+          try { msg = JSON.parse(msg).detail || msg; } catch (_) {}
+          throw new Error(msg);
+        }
+        window.location.href = "/";
+      } catch (err) {
+        errEl.textContent = err.message || "Could not start guest session";
       }
     });
 

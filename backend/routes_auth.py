@@ -1,13 +1,14 @@
-"""/api/auth/* — register, login, logout, me, Google OAuth start + callback."""
+"""/api/auth/* — register, login, logout, me, guest, upgrade, Google OAuth."""
 from __future__ import annotations
 
 import os
 import re
+import secrets
 
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,11 +24,16 @@ from .auth import (
     verify_password,
 )
 from .db import get_db
-from .models import User
+from .models import SessionToken, User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+GUEST_EMAIL_SUFFIX = "@guest.local"
+
+
+def _is_guest(user: User) -> bool:
+    return bool(user.email and user.email.endswith(GUEST_EMAIL_SUFFIX))
 
 
 class RegisterReq(BaseModel):
@@ -82,12 +88,59 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)) -> JSONRe
 
 @router.get("/me")
 async def me(user: User = Depends(current_user)) -> dict:
+    guest = _is_guest(user)
     return {
         "id": user.id,
-        "email": user.email,
+        # Hide the synthetic guest-XXXX@guest.local email from the UI.
+        "email": None if guest else user.email,
+        "is_guest": guest,
         "email_verified": user.email_verified,
         "linked_google": user.google_sub is not None,
     }
+
+
+@router.post("/guest")
+async def guest(db: AsyncSession = Depends(get_db)) -> JSONResponse:
+    """Start an anonymous session with a fresh User row. The user can later
+    convert this row into a real account via /api/auth/upgrade without losing
+    their trades, watchlist, or persisted replay snapshots."""
+    token = secrets.token_hex(6)
+    email = f"guest-{token}{GUEST_EMAIL_SUFFIX}"
+    # We still set a password hash so the row is internally consistent; nobody
+    # can ever log in to a guest by password (the email is unguessable and not
+    # surfaced via /me).
+    user = User(email=email, password_hash=hash_password(secrets.token_hex(16)))
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    session_token, _ = await create_session_token(db, user.id)
+    resp = JSONResponse({"id": user.id, "is_guest": True})
+    resp.set_cookie(value=session_token, **_cookie_kwargs(secure=is_production()))
+    return resp
+
+
+@router.post("/upgrade")
+async def upgrade(
+    req: RegisterReq,
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Convert the current guest account into a permanent one. Same user_id,
+    so all existing snapshots / watchlist / trades carry over."""
+    if not _is_guest(user):
+        raise HTTPException(400, "already a permanent account")
+    email = req.email.lower().strip()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(400, "invalid email")
+    clash = (await db.execute(
+        select(User).where(User.email == email, User.id != user.id)
+    )).scalar_one_or_none()
+    if clash is not None:
+        raise HTTPException(409, "email already registered")
+    user.email = email
+    user.password_hash = hash_password(req.password)
+    await db.commit()
+    return JSONResponse({"id": user.id, "email": user.email, "is_guest": False})
 
 
 # ---- Google OAuth ---------------------------------------------------------
@@ -133,7 +186,31 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     email = info.get("email")
     if not sub or not email:
         raise HTTPException(400, "google did not return an email")
-    user = await upsert_oauth_user(db, email, sub)
+
+    # If the visitor was already a guest, attach the Google identity to their
+    # existing row so they keep their trades/snapshots. We only do this when
+    # the Google account isn't already linked to a different non-guest user.
+    existing_cookie = request.cookies.get(COOKIE_NAME)
+    user = None
+    if existing_cookie:
+        tok = await db.get(SessionToken, existing_cookie)
+        if tok is not None:
+            current = await db.get(User, tok.user_id)
+            if current is not None and _is_guest(current):
+                claimed_by_sub = (await db.execute(
+                    select(User).where(User.google_sub == sub, User.id != current.id)
+                )).scalar_one_or_none()
+                claimed_by_email = (await db.execute(
+                    select(User).where(User.email == email.lower().strip(), User.id != current.id)
+                )).scalar_one_or_none()
+                if claimed_by_sub is None and claimed_by_email is None:
+                    current.email = email.lower().strip()
+                    current.google_sub = sub
+                    current.email_verified = True
+                    await db.commit()
+                    user = current
+    if user is None:
+        user = await upsert_oauth_user(db, email, sub)
     session_token, _ = await create_session_token(db, user.id)
     resp = RedirectResponse(url="/")
     resp.set_cookie(value=session_token, **_cookie_kwargs(secure=is_production()))
