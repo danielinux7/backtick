@@ -203,4 +203,33 @@
       });
     });
   }
+
+  // Mobile collapsible rows — Tools (chart-toolbar) and Indicators. Tapping
+  // the trigger toggles the row's .open class; tapping anywhere outside the
+  // row closes it. The hide/show is pure CSS — see style.css mobile block.
+  document.querySelectorAll(".mobile-toggle").forEach((btn) => {
+    const row = btn.parentElement;
+    if (!row) return;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = !row.classList.contains("open");
+      // Close any other open mobile row first so only one is expanded.
+      document
+        .querySelectorAll(".chart-toolbar.open, .indicators.open")
+        .forEach((r) => { if (r !== row) r.classList.remove("open"); });
+      row.classList.toggle("open", willOpen);
+      btn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    });
+  });
+  document.addEventListener("click", (e) => {
+    document
+      .querySelectorAll(".chart-toolbar.open, .indicators.open")
+      .forEach((row) => {
+        if (!row.contains(e.target)) {
+          row.classList.remove("open");
+          const t = row.querySelector(".mobile-toggle");
+          if (t) t.setAttribute("aria-expanded", "false");
+        }
+      });
+  });
 })();

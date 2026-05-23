@@ -190,6 +190,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
 .drawer-toggle { display: none; background: none; border: 0; color: inherit; font: inherit; }
 .drawer-tabs { display: none; }
+.mobile-toggle { display: none; }
 
 /* ---------- Responsive layout (Android Chrome + iOS Safari) ----------
    Below 900px: stack the chart and the side pane vertically, with the side
@@ -228,12 +229,15 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 
   .side-pane {
     border-top: 1px solid #1e222d;
-    max-height: 50svh;
+    /* `height` rather than `max-height` — flex children inside use
+       `flex: 1 1 0`, which needs a definite parent height to grow into.
+       Without this the Tape/Trades panels collapse to 0px. */
+    height: 50svh;
     overflow-y: auto;
     flex-shrink: 0;
     padding-bottom: max(0px, env(safe-area-inset-bottom));
   }
-  .side-pane[data-collapsed="true"] { max-height: 44px; overflow: hidden; }
+  .side-pane[data-collapsed="true"] { height: 44px; overflow: hidden; }
   /* Tab strip inside the drawer — pick one of Trade/Tape/History at a time so
      each tab gets the full drawer body instead of three panels fighting for
      scraps of vertical space. */
@@ -283,10 +287,26 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .symbol-row .symbol-add, .symbol-row .symbol-del { width: 36px; height: 36px; }
   .controls-center button { min-width: 64px; padding: 8px 12px; }
   .chart-toolbar { flex-wrap: wrap; }
-  /* Keep indicators on a single horizontally-scrollable strip so they don't
-     wrap to two rows and eat chart height. */
-  .indicators { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .indicators > * { flex-shrink: 0; }
+
+  /* Collapsible Tools + Indicators rows. The dropdown trigger lives as the
+     first child of each row; the row's other children hide until the user
+     taps the trigger (.open class), then wrap onto multiple lines. The
+     `measure-summary` span stays visible regardless so the measure readout
+     is never trapped behind a closed toolbar. */
+  .mobile-toggle {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #1e222d; color: #d1d4dc;
+    border: 1px solid #2a2e39; border-radius: 4px;
+    padding: 6px 10px; font: inherit; font-size: 12px;
+    font-weight: 600; cursor: pointer; min-height: 36px;
+  }
+  .mobile-toggle::after { content: "▾"; font-size: 10px; opacity: 0.7; transition: transform 0.15s; }
+  .chart-toolbar.open .mobile-toggle::after,
+  .indicators.open .mobile-toggle::after { transform: rotate(180deg); }
+  .chart-toolbar > *:not(.mobile-toggle):not(#measure-summary) { display: none; }
+  .indicators > *:not(.mobile-toggle) { display: none; }
+  .chart-toolbar.open > *:not(.mobile-toggle):not(#measure-summary) { display: inline-flex; align-items: center; }
+  .indicators.open > *:not(.mobile-toggle) { display: inline-flex; align-items: center; gap: 4px; }
 
   /* Chart container should never lose touch gestures to native scroll */
   #chart, #rsi-chart, #cvd-chart { touch-action: none; }

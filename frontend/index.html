@@ -78,6 +78,7 @@
   <main>
     <section class="chart-pane">
       <div class="chart-toolbar">
+        <button type="button" class="mobile-toggle" data-collapse="chart-toolbar" aria-expanded="false">Tools</button>
         <button type="button" class="tool" data-tool="hline" title="Horizontal line — click chart to place">&#8213; H-line</button>
         <input type="color" id="hline-color" value="#90caf9" title="H-line color" />
         <button type="button" class="tool" data-tool="measure" title="Measure — click start then end">&#9881; Measure</button>
@@ -125,6 +126,7 @@
       </div>
 
       <div class="indicators">
+        <button type="button" class="mobile-toggle" data-collapse="indicators" aria-expanded="false">Indicators</button>
         <strong>Indicators:</strong>
         <label><input type="checkbox" class="ind" data-kind="ema" data-period="20" /> EMA 20</label>
         <label><input type="checkbox" class="ind" data-kind="ema" data-period="50" /> EMA 50</label>
