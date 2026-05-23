@@ -196,30 +196,43 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
    place trades / see the tape. Above 900px we keep the existing two-column
    desktop layout untouched. */
 @media (max-width: 900px) {
-  html, body { overflow: auto; }
+  /* The viewport itself never scrolls. `main` flexes to fill whatever's left
+     of the header (no magic 100svh - 96px), and the side-pane shrinks the
+     chart when expanded instead of pushing content off the bottom. */
+  body { display: flex; flex-direction: column; min-height: 100svh; }
+  header { flex: 0 0 auto; }
   main {
+    flex: 1 1 0;
+    min-height: 0;
     grid-template-columns: 1fr;
     grid-template-rows: 1fr auto;
-    height: calc(100svh - 96px);
+    height: auto;
   }
   header {
     padding: 6px 8px;
     padding-top: max(6px, env(safe-area-inset-top));
-    gap: 8px;
+    gap: 6px;
+    flex-wrap: wrap;
+    row-gap: 6px;
   }
-  .setup { gap: 4px; }
+  /* Row 1: brand left, avatar right. Row 2: setup, single horizontal strip. */
+  .brand     { order: 0; }
+  .user-info { order: 1; width: auto; margin-left: auto; padding-top: 0; border-top: 0; }
+  .setup     { order: 2; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; gap: 4px; }
+  .setup > * { flex-shrink: 0; }
+  #status    { order: 3; }
   .setup select, .setup input, .setup button { font-size: 12px; padding: 6px 8px; min-height: 36px; }
   .setup input[name="warmup"] { width: 64px !important; }
   .symbol-popover { width: min(92vw, 360px); max-height: 50vh; }
-  .user-info { width: 100%; order: 99; padding-top: 4px; border-top: 1px solid #1e222d; }
 
   .side-pane {
     border-top: 1px solid #1e222d;
-    max-height: 50vh;
+    max-height: 50svh;
     overflow-y: auto;
+    flex-shrink: 0;
     padding-bottom: max(0px, env(safe-area-inset-bottom));
   }
-  .side-pane[data-collapsed="true"] { max-height: 56px; overflow: hidden; }
+  .side-pane[data-collapsed="true"] { max-height: 44px; overflow: hidden; }
   .side-pane .drawer-toggle {
     position: sticky; top: 0; width: 100%;
     display: flex; align-items: center; justify-content: space-between;
@@ -227,7 +240,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     padding: 8px 12px; font-size: 13px; font-weight: 600;
     color: #d1d4dc;
     cursor: pointer; user-select: none; z-index: 5;
-    min-height: 44px;
+    min-height: 40px;
   }
   .side-pane .drawer-toggle::after { content: "▾"; font-size: 11px; opacity: 0.7; }
   .side-pane[data-collapsed="true"] .drawer-toggle::after { transform: rotate(180deg); }
@@ -236,19 +249,15 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   button, .pick, .tool { min-height: 36px; }
   .controls-center button { min-width: 64px; padding: 8px 12px; }
   .chart-toolbar { flex-wrap: wrap; }
+  /* Keep indicators on a single horizontally-scrollable strip so they don't
+     wrap to two rows and eat chart height. */
+  .indicators { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .indicators > * { flex-shrink: 0; }
 
   /* Chart container should never lose touch gestures to native scroll */
   #chart, #rsi-chart, #cvd-chart { touch-action: none; }
 
   .drawer-toggle { display: flex; }
-}
-
-/* Use 100svh on mobile to avoid the iOS Safari viewport jump when the URL
-   bar shrinks. */
-@supports (height: 100svh) {
-  @media (max-width: 900px) {
-    main { height: calc(100svh - 96px); }
-  }
 }
 
 .chart-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }

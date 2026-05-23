@@ -184,53 +184,115 @@
     priceScale.applyOptions({ autoScale: true });
   };
 
+  // Shared locked-ratio zoom — Ctrl+Wheel on desktop and 2-finger pinch on
+  // touch both route here. `factor < 1` zooms in, `> 1` zooms out. The anchor
+  // is the cursor / pinch midpoint in viewport coords.
+  const applyLockedZoom = (factor, clientX, clientY) => {
+    const ts = chart.timeScale();
+    const tr = ts.getVisibleLogicalRange();
+    if (!tr) return;
+    const rect = chartEl.getBoundingClientRect();
+    const relX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const relY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const tSpan = tr.to - tr.from;
+    const tAnchor = tr.from + tSpan * relX;
+    const newTSpan = Math.max(2, tSpan * factor);
+    if (lockedRatio === null) {
+      const pr0 = priceScale.getVisibleRange();
+      if (!pr0) return;
+      const bars = tr.to - tr.from;
+      lockedRatio = bars > 0 ? (pr0.to - pr0.from) / bars : null;
+      if (!lockedRatio) return;
+      priceScale.applyOptions({ autoScale: false });
+    }
+    const pr = priceScale.getVisibleRange();
+    if (!pr) return;
+    ts.setVisibleLogicalRange({
+      from: tAnchor - newTSpan * relX,
+      to: tAnchor + newTSpan * (1 - relX),
+    });
+    const pSpan = pr.to - pr.from;
+    const pAnchor = pr.to - relY * pSpan;       // chart y is inverted
+    const newPSpan = newTSpan * lockedRatio;
+    priceScale.setVisibleRange({
+      from: pAnchor - newPSpan * (1 - relY),
+      to: pAnchor + newPSpan * relY,
+    });
+  };
+
   const wheelZoom = (e) => {
     e.preventDefault();
     const ts = chart.timeScale();
     const tr = ts.getVisibleLogicalRange();
     if (!tr) return;
     const factor = e.deltaY < 0 ? 0.85 : 1.18;
-    const rect = chartEl.getBoundingClientRect();
-    const relX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    const relY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    const tSpan = tr.to - tr.from;
-    const tAnchor = tr.from + tSpan * relX;
-    const newTSpan = Math.max(2, tSpan * factor);
-    const newTimeRange = {
-      from: tAnchor - newTSpan * relX,
-      to: tAnchor + newTSpan * (1 - relX),
-    };
 
     if (e.ctrlKey || e.metaKey) {
-      // Ctrl/Cmd + wheel — ratio-locked zoom (price scales with time)
-      if (lockedRatio === null) {
-        const pr = priceScale.getVisibleRange();
-        if (!pr) return;
-        const bars = tr.to - tr.from;
-        lockedRatio = bars > 0 ? (pr.to - pr.from) / bars : null;
-        if (!lockedRatio) return;
-        priceScale.applyOptions({ autoScale: false });
-      }
-      const pr = priceScale.getVisibleRange();
-      if (!pr) return;
-      ts.setVisibleLogicalRange(newTimeRange);
-      const pSpan = pr.to - pr.from;
-      const pAnchor = pr.to - relY * pSpan;     // chart y is inverted
-      const newPSpan = newTSpan * lockedRatio;
-      priceScale.setVisibleRange({
-        from: pAnchor - newPSpan * (1 - relY),
-        to: pAnchor + newPSpan * relY,
-      });
+      applyLockedZoom(factor, e.clientX, e.clientY);
     } else {
       // plain wheel — anchor on the right edge so wheel-out reveals historical
       // bars (the right side stays put; the left side expands into the past).
       // Ctrl/Cmd+wheel above still anchors on the mouse for precision zoom.
       if (lockedRatio !== null) resetZoomLock();
+      const newTSpan = Math.max(2, (tr.to - tr.from) * factor);
       ts.setVisibleLogicalRange({ from: tr.to - newTSpan, to: tr.to });
     }
   };
   chartEl.addEventListener("wheel", wheelZoom, { passive: false });
   rsiEl.addEventListener("wheel", wheelZoom, { passive: false });
+
+  // Two-finger pinch zoom on touch — mirrors Ctrl+Wheel: both axes scale
+  // together so candle shape stays constant. Single-finger pan stays in the
+  // hands of lightweight-charts (handleScroll.horzTouchDrag); we only take
+  // over once a second finger lands.
+  const wirePinch = (el) => {
+    const active = new Map();   // pointerId -> {x, y}
+    let lastDist = 0;
+    el.style.touchAction = "none";
+
+    const onDown = (e) => {
+      if (e.pointerType !== "touch") return;
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (active.size === 2) {
+        const pts = [...active.values()];
+        lastDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      }
+    };
+    const onMove = (e) => {
+      if (e.pointerType !== "touch" || !active.has(e.pointerId)) return;
+      active.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (active.size < 2) return;
+      // Two fingers down — own the gesture so lightweight-charts doesn't try
+      // to single-finger-pan with whatever finger it picked first.
+      e.preventDefault();
+      e.stopPropagation();
+      const pts = [...active.values()];
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      if (lastDist < 1) { lastDist = dist; return; }
+      const cx = (pts[0].x + pts[1].x) / 2;
+      const cy = (pts[0].y + pts[1].y) / 2;
+      // Pinch open (dist grows) → zoom in (factor < 1).
+      const factor = lastDist / dist;
+      // Damp small jitter so the chart doesn't twitch.
+      if (Math.abs(factor - 1) > 0.005) {
+        applyLockedZoom(factor, cx, cy);
+        lastDist = dist;
+      }
+    };
+    const onEnd = (e) => {
+      if (active.delete(e.pointerId) && active.size < 2) lastDist = 0;
+    };
+    // Capture phase so we run before the chart's internal pointer handlers
+    // and can stopPropagation when we want to own the gesture.
+    el.addEventListener("pointerdown", onDown, { capture: true });
+    el.addEventListener("pointermove", onMove, { capture: true });
+    el.addEventListener("pointerup", onEnd, { capture: true });
+    el.addEventListener("pointercancel", onEnd, { capture: true });
+    el.addEventListener("pointerleave", onEnd, { capture: true });
+  };
+  wirePinch(chartEl);
+  wirePinch(rsiEl);
+  wirePinch(cvdEl);
 
   const emaSeries = {};
   const tradePriceLines = new Map();
@@ -505,6 +567,20 @@
       menu.appendChild(logout);
     }
 
+    // Install app — only when the PWA layer reports it's installable. pwa.js
+    // owns the prompt; clicking this item with [data-action="install"] is
+    // picked up by its delegated handler.
+    const inst = window.__installState;
+    if (inst && !inst.standalone && (inst.available || inst.iosHint)) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "user-menu-item";
+      item.dataset.action = "install";
+      item.textContent = inst.iosHint ? "Add to Home Screen" : "Install app";
+      item.addEventListener("click", () => { closeUserMenu(menu); });
+      menu.appendChild(item);
+    }
+
     avatar.addEventListener("click", (e) => {
       e.stopPropagation();
       if (menu.hidden) openUserMenu(menu);
@@ -516,6 +592,7 @@
   }
   renderUserInfo();
   window.addEventListener("auth:changed", () => renderUserInfo());
+  window.addEventListener("install:available", () => renderUserInfo());
 
   // ---- Volume profile (aggTrade-bucketed, with buy/sell split per level)
   // Backend computes the profile for the currently-visible time range; we
