@@ -138,8 +138,13 @@
       </div>
     </section>
 
-    <aside class="side-pane" id="side-pane">
+    <aside class="side-pane" id="side-pane" data-tab="trade">
       <button type="button" class="drawer-toggle" id="drawer-toggle" aria-expanded="true">Trade · Tape · History</button>
+      <div class="drawer-tabs" id="drawer-tabs" role="tablist">
+        <button type="button" data-tab="trade" class="active" role="tab" aria-selected="true">Trade</button>
+        <button type="button" data-tab="tape"  role="tab" aria-selected="false">Tape</button>
+        <button type="button" data-tab="history" role="tab" aria-selected="false">History</button>
+      </div>
       <div class="trade-panel">
         <h3>Place trade</h3>
         <div class="row">

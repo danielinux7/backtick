@@ -189,6 +189,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 
 main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
 .drawer-toggle { display: none; background: none; border: 0; color: inherit; font: inherit; }
+.drawer-tabs { display: none; }
 
 /* ---------- Responsive layout (Android Chrome + iOS Safari) ----------
    Below 900px: stack the chart and the side pane vertically, with the side
@@ -233,6 +234,35 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     padding-bottom: max(0px, env(safe-area-inset-bottom));
   }
   .side-pane[data-collapsed="true"] { max-height: 44px; overflow: hidden; }
+  /* Tab strip inside the drawer — pick one of Trade/Tape/History at a time so
+     each tab gets the full drawer body instead of three panels fighting for
+     scraps of vertical space. */
+  .drawer-tabs {
+    display: flex;
+    background: #0f1218;
+    border-bottom: 1px solid #1e222d;
+    position: sticky; top: 40px; z-index: 4;
+  }
+  .drawer-tabs button {
+    flex: 1; background: transparent; color: #8a93a3;
+    border: 0; border-bottom: 2px solid transparent;
+    padding: 8px 4px; font: inherit; font-size: 12px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
+    cursor: pointer; min-height: 40px;
+  }
+  .drawer-tabs button.active { color: #26a69a; border-bottom-color: #26a69a; }
+  .side-pane[data-tab="trade"]   > .tape-panel,
+  .side-pane[data-tab="trade"]   > .trades-panel,
+  .side-pane[data-tab="tape"]    > .trade-panel,
+  .side-pane[data-tab="tape"]    > .trades-panel,
+  .side-pane[data-tab="history"] > .trade-panel,
+  .side-pane[data-tab="history"] > .tape-panel { display: none; }
+  /* Per-panel h3 headers become redundant (tab strip already labels them). */
+  .side-pane > .trade-panel  > h3,
+  .side-pane > .tape-panel   > h3,
+  .side-pane > .trades-panel > h3 { display: none; }
+  /* When collapsed the tab strip hides too (only the toggle bar shows). */
+  .side-pane[data-collapsed="true"] .drawer-tabs { display: none; }
   .side-pane .drawer-toggle {
     position: sticky; top: 0; width: 100%;
     display: flex; align-items: center; justify-content: space-between;
@@ -245,8 +275,12 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .side-pane .drawer-toggle::after { content: "▾"; font-size: 11px; opacity: 0.7; }
   .side-pane[data-collapsed="true"] .drawer-toggle::after { transform: rotate(180deg); }
 
-  /* Touch-friendly hit targets */
+  /* Touch-friendly hit targets — but small icon buttons (avatar, +/× in the
+     symbol popover) get explicit equal width+height so they stay square
+     instead of being stretched into ovals by the min-height alone. */
   button, .pick, .tool { min-height: 36px; }
+  .user-avatar { width: 36px; height: 36px; font-size: 14px; }
+  .symbol-row .symbol-add, .symbol-row .symbol-del { width: 36px; height: 36px; }
   .controls-center button { min-width: 64px; padding: 8px 12px; }
   .chart-toolbar { flex-wrap: wrap; }
   /* Keep indicators on a single horizontally-scrollable strip so they don't

@@ -186,4 +186,21 @@
       setCollapsed(pane.dataset.collapsed !== "true" ? true : false);
     });
   }
+
+  // Mobile drawer tabs: Trade / Tape / History. Only one panel shows at a
+  // time so each gets the full drawer body. The CSS uses
+  // .side-pane[data-tab="…"] to pick which child to render.
+  const tabs = document.querySelectorAll("#drawer-tabs button[data-tab]");
+  if (tabs.length && pane) {
+    tabs.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        pane.dataset.tab = btn.dataset.tab;
+        tabs.forEach((t) => {
+          const on = t === btn;
+          t.classList.toggle("active", on);
+          t.setAttribute("aria-selected", on ? "true" : "false");
+        });
+      });
+    });
+  }
 })();
