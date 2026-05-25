@@ -220,8 +220,14 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   /* Row 1: brand left, avatar right. Row 2: setup, single horizontal strip. */
   .brand     { order: 0; }
   .user-info { order: 1; width: auto; margin-left: auto; padding-top: 0; border-top: 0; }
-  .setup     { order: 2; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; gap: 4px; }
+  /* Wrap onto multiple rows rather than a horizontal-scroll strip: on a phone
+     the scrollbar is invisible, so controls (tf, market, Load) silently clipped
+     off the right edge. Wrapping keeps every control reachable. */
+  .setup     { order: 2; flex: 1 0 100%; flex-wrap: wrap; gap: 4px; }
   .setup > * { flex-shrink: 0; }
+  .setup > .symbol-picker { flex: 1 1 140px; }
+  .setup > .symbol-picker > input { width: 100%; min-width: 0; }
+  .setup > select[name="market"], .setup > #tf-select { flex: 1 1 auto; min-width: 72px; }
   #status    { order: 3; }
   .setup select, .setup input, .setup button { font-size: 12px; padding: 6px 8px; min-height: 36px; }
   .setup input[name="warmup"] { width: 64px !important; }
@@ -312,6 +318,27 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   #chart, #rsi-chart, #cvd-chart { touch-action: none; }
 
   .drawer-toggle { display: flex; }
+
+  /* Replay controls: the desktop `1fr auto 1fr` grid collides on a phone
+     (Step/Speed, Prev/Play/Next, and the cursor readout overlap). Stack them
+     into rows — primary step buttons first as full-width touch targets.
+     Scoped under `.chart-pane` so these win over the base `.controls` grid
+     rule, which is defined later in the file (media queries add no specificity). */
+  .chart-pane .controls { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  .chart-pane .controls-center { order: -1; }
+  .chart-pane .controls-center button { flex: 1; }
+  .chart-pane .controls-left { justify-content: space-between; }
+  .chart-pane .controls-left label { flex: 1; }
+  .chart-pane .controls-left select, .chart-pane .controls-left input { flex: 1; min-width: 0; }
+  .chart-pane .controls-right { justify-content: flex-start; }
+  .chart-pane #cursor-info { white-space: normal; font-size: 11px; }
+
+  /* Keep trade-form labels (e.g. "Side for picks") on one line; let the
+     adjacent control flex into the remaining width instead of forcing the
+     label text to wrap. */
+  .trade-panel .row > label { white-space: nowrap; }
+  .trade-panel .row > label > select,
+  .trade-panel .row > label > input { width: auto; flex: 1 1 auto; min-width: 0; }
 }
 
 .chart-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
