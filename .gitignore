@@ -3,3 +3,11 @@ __pycache__/
 data_cache/**/*.parquet
 data_cache/**/*.csv
 .venv/
+
+# node / playwright E2E
+node_modules/
+test-results/
+playwright-report/
+
+# local sqlite dev db
+backtick.db
