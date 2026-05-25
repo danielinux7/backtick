@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(pytest:*)",
+      "Bash(/tmp/backtick_venv/bin/pytest:*)",
+      "Bash(/tmp/backtick_venv/bin/python:*)",
+      "Bash(/tmp/backtick_venv/bin/uvicorn:*)",
+      "Bash(npx @playwright/mcp:*)",
+      "Bash(npx playwright:*)"
+    ]
+  }
+}

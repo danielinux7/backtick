@@ -1,0 +1,5 @@
+# Dev/test-only deps. Install alongside requirements.txt in a venv:
+#   /tmp/backtick_venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+pytest>=8.0
+pytest-asyncio>=0.23
+# Frontend E2E uses the Playwright MCP / CLI via `npx playwright test` (Node, not pip).
