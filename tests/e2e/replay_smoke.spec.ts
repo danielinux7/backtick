@@ -6,13 +6,16 @@ import { test, expect } from '@playwright/test';
 test('load SOLUSDT, step, place a long, see it in the trades table', async ({ page }) => {
   await page.goto('/');
 
-  // The page auto-loads SOLUSDT 4h; clicking Load is harmless if already armed.
-  // Controls stay disabled until a session is loaded — wait for that signal.
   const longBtn = page.locator('#long-btn');
   const nextBtn = page.locator('#next-1');
 
-  // Ensure a session is loaded (symbol defaults to SOLUSDT in #symbol-input).
-  await page.getByRole('button', { name: 'Load' }).click().catch(() => {});
+  // Drive a deterministic Replay session: symbol defaults to SOLUSDT, tf to 4h,
+  // and the replay date is pre-filled (~60 days back). Selecting Replay mode
+  // triggers a single auto-load. (Do NOT also click Load — a second load races
+  // with the trade and resetForNewSession would wipe the trades table.)
+  await page.selectOption('#mode-select', { label: 'Replay' });
+
+  // Controls stay disabled until a session is loaded — wait for that signal.
   await expect(longBtn).toBeEnabled({ timeout: 30_000 });
   await expect(nextBtn).toBeEnabled();
 
