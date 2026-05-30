@@ -397,6 +397,10 @@
     maxDate: "today",
     defaultDate: defaultReplay,
     allowInput: true,
+    // Keep the single #replay-date element on mobile too. Without this, flatpickr
+    // injects a separate native input.flatpickr-mobile that escapes the
+    // `body.replay-mode #replay-date` hide rule and leaks into live mode on phones.
+    disableMobile: true,
     onChange: () => { if (autoLoadReady) loadSession(); },
   });
 
@@ -1138,6 +1142,10 @@
 
   const fetchTape = async () => {
     if (!session) return;
+    // Live mode: the Binance WebSocket @aggTrade stream already feeds tapeBuffer
+    // (see handleLiveAggTrade), so skip the REST recent_trades poll entirely —
+    // calling it on every step/action is what tripped the Binance 418/429 IP ban.
+    if (session.is_live) return;
     if ($("#speed").value.startsWith("tick:")) return;  // tick mode owns its tape
     if (tapeLastCursorTime === session.current_time) return;
     tapeLastCursorTime = session.current_time;
@@ -1624,12 +1632,11 @@
       });
       applySession(data, true);
       clearFieldError(setupForm.symbol);   // a prior "unknown symbol" cleared on success
-      if (data.is_live) {
-        connectLiveStream(data);
-        setStatus(`live · ${data.total} warmup candles`);
-      } else {
-        setStatus(`loaded ${data.total} candles`);
-      }
+      if (data.is_live) connectLiveStream(data);
+      // Clear the transient "connecting…/loading…" line. The loaded-candle count
+      // was just diagnostic noise (the user reads it as logging), not something
+      // an end user needs, so don't surface it.
+      setStatus("");
     } catch (err) {
       if (err.name === "AbortError") return;
       const msg = err.message;
