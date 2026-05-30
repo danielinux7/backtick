@@ -156,7 +156,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 #replay-date { field-sizing: content; width: auto; max-width: 12ch; }
 .symbol-popover {
   position: absolute; top: calc(100% + 4px); left: 0;
-  width: 320px; max-height: 360px; overflow: auto;
+  width: 230px; max-height: 360px; overflow: auto;
   background: #1e222d; color: #d1d4dc;
   border: 1px solid #2a2e39; border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.45);
@@ -268,7 +268,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .setup .live-indicator { display: none; }
   #status    { order: 3; }
   .setup select, .setup input, .setup button { font-size: 11px; padding: 5px 4px; min-height: 34px; }
-  .symbol-popover { width: min(92vw, 360px); max-height: 50vh; }
+  .symbol-popover { width: min(78vw, 240px); max-height: 50vh; }
   /* Dropdowns share the single setup strip. Size each to its label (no caret,
      no row-filling stretch) so they don't hog space, and keep a finger-sized
      tap height. */

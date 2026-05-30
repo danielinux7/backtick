@@ -1,15 +1,15 @@
 (() => {
   const $ = (sel) => document.querySelector(sel);
 
-  // Chart palette — matches the mobile Buy(green)/Sell(orange) trade bar so the
-  // candles + order lines read as the same up=buy / down=sell language.
+  // Order palette — entry/SL/TP/limit lines, markers and zones use the trade
+  // bar's Buy(green)/Sell(orange) language. (Candles keep the classic teal/red.)
   const UP = "#1fa53a", DOWN = "#e8622a";
   const UP_LIGHT = "#7bd39a", DOWN_LIGHT = "#f3a373";   // limit (pending) lines
 
   const statusEl = $("#status");
   const setStatus = (msg, isErr = false) => {
     statusEl.textContent = msg;
-    statusEl.style.color = isErr ? "#ef5350" : UP;
+    statusEl.style.color = isErr ? "#ef5350" : "#26a69a";
     if (!isErr) setTimeout(() => { if (statusEl.textContent === msg) statusEl.textContent = ""; }, 3000);
   };
 
@@ -84,9 +84,9 @@
   const setChartPan = (on) =>
     chart.applyOptions({ handleScroll: on ? H_SCROLL : false, handleScale: on ? H_SCALE : false });
   const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-    upColor: UP, downColor: DOWN,
-    borderUpColor: UP, borderDownColor: DOWN,
-    wickUpColor: UP, wickDownColor: DOWN,
+    upColor: "#26a69a", downColor: "#ef5350",
+    borderUpColor: "#26a69a", borderDownColor: "#ef5350",
+    wickUpColor: "#26a69a", wickDownColor: "#ef5350",
   });
   const candleMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
   const liquidationMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
@@ -108,9 +108,9 @@
   // either is toggled; data is cached so a rebuild repaints instantly.
   const RSI_OPTS = { color: "#bb86fc", lineWidth: 1, priceLineVisible: false, lastValueVisible: true };
   const CVD_OPTS = {
-    upColor: UP, downColor: DOWN,
-    borderUpColor: UP, borderDownColor: DOWN,
-    wickUpColor: UP, wickDownColor: DOWN,
+    upColor: "#26a69a", downColor: "#ef5350",
+    borderUpColor: "#26a69a", borderDownColor: "#ef5350",
+    wickUpColor: "#26a69a", wickDownColor: "#ef5350",
     priceLineVisible: false,
   };
   const SUBPANE_HEIGHT = 130;   // default px height for each indicator pane
