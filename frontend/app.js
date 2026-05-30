@@ -1,9 +1,15 @@
 (() => {
   const $ = (sel) => document.querySelector(sel);
+
+  // Chart palette — matches the mobile Buy(green)/Sell(orange) trade bar so the
+  // candles + order lines read as the same up=buy / down=sell language.
+  const UP = "#1fa53a", DOWN = "#e8622a";
+  const UP_LIGHT = "#7bd39a", DOWN_LIGHT = "#f3a373";   // limit (pending) lines
+
   const statusEl = $("#status");
   const setStatus = (msg, isErr = false) => {
     statusEl.textContent = msg;
-    statusEl.style.color = isErr ? "#ef5350" : "#26a69a";
+    statusEl.style.color = isErr ? "#ef5350" : UP;
     if (!isErr) setTimeout(() => { if (statusEl.textContent === msg) statusEl.textContent = ""; }, 3000);
   };
 
@@ -40,7 +46,9 @@
   const _hm  = _fmt({ hour: "2-digit", minute: "2-digit" });
   const _hms = _fmt({ hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const _ymdHm = _fmt({ year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const _dm  = _fmt({ day: "2-digit", month: "2-digit" });
   const tzHm    = (sec) => _hm.format(new Date(sec * 1000));
+  const tzDm    = (sec) => _dm.format(new Date(sec * 1000));
   const tzHmsMs = (ms)  => _hms.format(new Date(ms));
   const tzYmdHm = (sec) => _ymdHm.format(new Date(sec * 1000)).replace(",", "");
 
@@ -57,8 +65,11 @@
     timeScale: {
       timeVisible: true, secondsVisible: false, borderColor: "#2a2e39",
       // lightweight-charts treats `time` (unix seconds) as UTC by default;
-      // override formatters to render Amman wall-clock time on the axis
-      tickMarkFormatter: (time) => tzHm(time),
+      // override formatters to render Amman wall-clock time on the axis.
+      // Respect the tick type: day boundaries show DD/MM (Year/Month/DayOfMonth
+      // = 0/1/2), intraday ticks (Time/TimeWithSeconds = 3/4) show HH:MM.
+      tickMarkFormatter: (time, tickMarkType) =>
+        tickMarkType <= 2 ? tzDm(time) : tzHm(time),
     },
     rightPriceScale: { borderColor: "#2a2e39" },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
@@ -73,9 +84,9 @@
   const setChartPan = (on) =>
     chart.applyOptions({ handleScroll: on ? H_SCROLL : false, handleScale: on ? H_SCALE : false });
   const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
-    upColor: "#26a69a", downColor: "#ef5350",
-    borderUpColor: "#26a69a", borderDownColor: "#ef5350",
-    wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+    upColor: UP, downColor: DOWN,
+    borderUpColor: UP, borderDownColor: DOWN,
+    wickUpColor: UP, wickDownColor: DOWN,
   });
   const candleMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
   const liquidationMarkers = LightweightCharts.createSeriesMarkers(candleSeries, []);
@@ -97,22 +108,81 @@
   // either is toggled; data is cached so a rebuild repaints instantly.
   const RSI_OPTS = { color: "#bb86fc", lineWidth: 1, priceLineVisible: false, lastValueVisible: true };
   const CVD_OPTS = {
-    upColor: "#26a69a", downColor: "#ef5350",
-    borderUpColor: "#26a69a", borderDownColor: "#ef5350",
-    wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+    upColor: UP, downColor: DOWN,
+    borderUpColor: UP, borderDownColor: DOWN,
+    wickUpColor: UP, wickDownColor: DOWN,
     priceLineVisible: false,
   };
-  const SUBPANE_HEIGHT = 130;   // px height for each indicator pane
+  const SUBPANE_HEIGHT = 130;   // default px height for each indicator pane
   let rsiSeries = null, cvdSeries = null;
   let rsiData = [], cvdData = [];
   let rsiVisible = false, cvdVisible = false;
+  const paneHeights = [];        // per-pane override in px (index 1 = first sub-pane)
 
   const applyPaneHeights = () => {
     try {
       const panes = chart.panes();
-      for (let i = 1; i < panes.length; i++) panes[i].setHeight(SUBPANE_HEIGHT);
+      for (let i = 1; i < panes.length; i++) panes[i].setHeight(paneHeights[i] ?? SUBPANE_HEIGHT);
     } catch (_) {}
   };
+
+  // ---- Fat, touch-friendly resize handles over each indicator-pane boundary.
+  // lightweight-charts' own pane separators are a ~1px target; these overlay
+  // strips give a big grab area and persist the dragged height in paneHeights so
+  // a relayout (toggling another indicator) doesn't reset it.
+  const chartStack = chartEl.parentElement;   // .chart-stack (position: relative)
+  const paneHandles = [];
+  const wirePaneHandle = (h) => {
+    h.addEventListener("pointerdown", (e) => {
+      const paneIdx = parseInt(h.dataset.pane || "0", 10);
+      let panes;
+      try { panes = chart.panes(); } catch (_) { return; }
+      if (!paneIdx || paneIdx >= panes.length) return;
+      e.preventDefault();
+      try { h.setPointerCapture(e.pointerId); } catch (_) {}
+      const startY = e.clientY;
+      const startH = panes[paneIdx].getHeight();
+      const maxH = Math.max(80, chartEl.clientHeight * 0.6);
+      const onMove = (ev) => {
+        const newH = Math.max(60, Math.min(maxH, startH + (startY - ev.clientY)));  // drag up = taller
+        paneHeights[paneIdx] = newH;
+        try { chart.panes()[paneIdx].setHeight(newH); } catch (_) {}
+        positionPaneHandles();
+      };
+      const onUp = () => {
+        h.removeEventListener("pointermove", onMove);
+        h.removeEventListener("pointerup", onUp);
+        h.removeEventListener("pointercancel", onUp);
+      };
+      h.addEventListener("pointermove", onMove);
+      h.addEventListener("pointerup", onUp);
+      h.addEventListener("pointercancel", onUp);
+    });
+  };
+  const positionPaneHandles = () => {
+    let panes;
+    try { panes = chart.panes(); } catch (_) { return; }
+    const count = Math.max(0, panes.length - 1);   // one handle per sub-pane top edge
+    while (paneHandles.length < count) {
+      const h = document.createElement("div");
+      h.className = "pane-resize";
+      wirePaneHandle(h);
+      chartStack.appendChild(h);
+      paneHandles.push(h);
+    }
+    const top0 = chartEl.offsetTop;
+    let y = 0;
+    for (let i = 0; i < paneHandles.length; i++) {
+      const h = paneHandles[i];
+      const paneIdx = i + 1;
+      if (paneIdx >= panes.length) { h.style.display = "none"; continue; }
+      y += panes[i].getHeight();              // boundary above paneIdx (+~1px separators)
+      h.style.display = "block";
+      h.dataset.pane = String(paneIdx);
+      h.style.top = `${top0 + y + i - 8}px`;  // center the 16px strip on the boundary
+    }
+  };
+
   const relayoutSubPanes = () => {
     if (rsiSeries) { chart.removeSeries(rsiSeries); rsiSeries = null; }
     if (cvdSeries) { chart.removeSeries(cvdSeries); cvdSeries = null; }
@@ -126,8 +196,10 @@
       cvdSeries.setData(cvdData);
     }
     applyPaneHeights();
-    requestAnimationFrame(applyPaneHeights);
+    positionPaneHandles();
+    requestAnimationFrame(() => { applyPaneHeights(); positionPaneHandles(); });
   };
+  if (window.ResizeObserver) new ResizeObserver(() => positionPaneHandles()).observe(chartEl);
   const showRsi = (visible) => { if (visible !== rsiVisible) { rsiVisible = visible; relayoutSubPanes(); } };
   const showCvd = (visible) => { if (visible !== cvdVisible) { cvdVisible = visible; relayoutSubPanes(); } };
 
@@ -697,8 +769,8 @@
   // ---- Trade zone primitives (transparent green/red rectangles
   // entry→TP and entry→SL, persisting after the trade closes)
   const tradeZones = new Map();   // tradeId -> primitive
-  const ZONE_GREEN = "rgba(38, 166, 154, 0.45)";
-  const ZONE_RED   = "rgba(239,  83,  80, 0.45)";
+  const ZONE_TP = "rgba(31, 165, 58, 0.40)";    // green, matches UP / TP line
+  const ZONE_SL = "rgba(232, 98, 42, 0.40)";    // orange, matches DOWN / SL line
 
   const makeTradeZone = (tradeId) => {
     let attached = null;
@@ -746,8 +818,8 @@
               Math.abs(yOther - yEntry) * vpr,
             );
           };
-          if (t.tp != null) drawBox(series.priceToCoordinate(t.tp), ZONE_GREEN);
-          if (t.sl != null) drawBox(series.priceToCoordinate(t.sl), ZONE_RED);
+          if (t.tp != null) drawBox(series.priceToCoordinate(t.tp), ZONE_TP);
+          if (t.sl != null) drawBox(series.priceToCoordinate(t.sl), ZONE_SL);
         });
       },
     };
@@ -1185,7 +1257,7 @@
         markers.push({
           time: markerTime(t.entry_time),
           position: t.side === "long" ? "belowBar" : "aboveBar",
-          color: t.side === "long" ? "#26a69a" : "#ef5350",
+          color: t.side === "long" ? UP : DOWN,
           shape: t.side === "long" ? "arrowUp" : "arrowDown",
         });
       }
@@ -1193,7 +1265,7 @@
         markers.push({
           time: markerTime(t.exit_time),
           position: "inBar",
-          color: (t.pnl ?? 0) >= 0 ? "#26a69a" : "#ef5350",
+          color: (t.pnl ?? 0) >= 0 ? UP : DOWN,
           shape: "circle",
         });
       }
@@ -1222,23 +1294,23 @@
       if (t.status === "pending" && t.limit_price != null) {
         add("limit", t.limit_price, {
           price: t.limit_price,
-          color: t.side === "long" ? "#80cbc4" : "#ef9a9a",
+          color: t.side === "long" ? UP_LIGHT : DOWN_LIGHT,
           lineStyle: 1, lineWidth: 1, axisLabelVisible: true,
           title: `LIMIT ${t.side[0].toUpperCase()} ${t.qty}`,
         });
       } else if (t.entry_price != null) {
         add("entry", t.entry_price, {
           price: t.entry_price,
-          color: t.side === "long" ? "#26a69a" : "#ef5350",
+          color: t.side === "long" ? UP : DOWN,
           lineStyle: 0, lineWidth: 1, axisLabelVisible: true,
           title: `${t.side[0].toUpperCase()} ${t.qty}`,
         });
       }
       if (t.sl != null) add("sl", t.sl, {
-        price: t.sl, color: "#ef5350", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "SL",
+        price: t.sl, color: DOWN, lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "SL",
       });
       if (t.tp != null) add("tp", t.tp, {
-        price: t.tp, color: "#26a69a", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "TP",
+        price: t.tp, color: UP, lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "TP",
       });
       tradePriceLines.set(t.id, { lines: items.map((it) => it.line), items, fp });
     }
@@ -2006,7 +2078,7 @@
       b.classList.toggle("armed", k === kind);
     });
     const hint = $("#arm-hint");
-    hint.textContent = `${ARM_LABEL[kind] || kind}  ·  esc to cancel`;
+    hint.textContent = `${ARM_LABEL[kind] || kind}`;
     hint.style.display = "";
   };
   const disarm = () => {
@@ -2418,7 +2490,7 @@
       if (!time) return;
       if (!measureFirst) {
         measureFirst = { time, price };
-        $("#arm-hint").textContent = "click end of measurement  ·  esc to cancel";
+        $("#arm-hint").textContent = "click end of measurement";
       } else {
         // remove any prior measure series first
         if (measureSeries) { chart.removeSeries(measureSeries); measureSeries = null; }
@@ -2522,7 +2594,7 @@
     let g = $("#limit-ghost");
     if (!g) { g = document.createElement("div"); g.id = "limit-ghost"; stack.appendChild(g); }
     g.style.top = `${clientY - stack.getBoundingClientRect().top}px`;
-    g.style.borderTopColor = side === "long" ? "#80cbc4" : "#ef9a9a";
+    g.style.borderTopColor = side === "long" ? UP_LIGHT : DOWN_LIGHT;
     if (price != null && isFinite(price)) g.dataset.price = price.toFixed(getPrecision(price));
   };
   const wireSideButton = (btn, side) => {

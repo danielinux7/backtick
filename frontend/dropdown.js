@@ -23,11 +23,7 @@
     if (sel.title) trigger.title = sel.title;
     const label = document.createElement("span");
     label.className = "dd-label";
-    const caret = document.createElement("span");
-    caret.className = "dd-caret";
-    caret.textContent = "⌄";     // ⌄
     trigger.appendChild(label);
-    trigger.appendChild(caret);
     wrap.appendChild(trigger);
 
     const pop = document.createElement("div");

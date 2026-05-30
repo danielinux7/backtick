@@ -149,7 +149,11 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
                          to { transform: translateY(0);    opacity: 1; } }
 
 .symbol-picker { position: relative; }
-.symbol-picker > input { min-width: 130px; }
+/* Fit the field to its symbol text instead of a fixed min-width. field-sizing
+   (Chromium 123+) sizes the input to its content; the max-width caps long
+   tickers and is the graceful fallback width on browsers without it. */
+.symbol-picker > input { field-sizing: content; width: auto; min-width: 6ch; max-width: 16ch; }
+#replay-date { field-sizing: content; width: auto; max-width: 12ch; }
 .symbol-popover {
   position: absolute; top: calc(100% + 4px); left: 0;
   width: 320px; max-height: 360px; overflow: auto;
@@ -191,7 +195,6 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 }
 .dd .dd-trigger:hover { background: #1e222d; border-color: #3a4150; }
 .dd .dd-trigger .dd-label { flex: 1; text-align: left; }
-.dd .dd-trigger .dd-caret { color: #8a93a3; font-size: 11px; line-height: 1; }
 .dd .dd-popover {
   position: absolute; top: calc(100% + 4px); left: 0;
   min-width: 100%; max-height: 360px; overflow: auto;
@@ -256,19 +259,23 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   /* Row 1: brand left, avatar right. Row 2: setup, single horizontal strip. */
   .brand     { order: 0; }
   .user-info { order: 1; width: auto; margin-left: auto; padding-top: 0; border-top: 0; }
-  /* One horizontal strip, no wrap and no horizontal scroll: every control
-     shrinks to share the row (mode, symbol, market, tf, date). */
+  /* One horizontal strip, no wrap: each control sizes to its own content and
+     sits left-aligned (mode, symbol, market, tf, date) — no stretching to fill
+     the row. They may shrink if the row gets tight, but won't expand. */
   .setup     { order: 2; flex: 1 0 100%; flex-wrap: nowrap; gap: 4px; }
-  .setup > * { flex: 1 1 0; min-width: 0; }
-  .setup > .symbol-picker > input { width: 100%; min-width: 0; }
+  .setup > * { flex: 0 1 auto; min-width: 0; }
+  .setup > .symbol-picker > input { min-width: 0; }
   .setup .live-indicator { display: none; }
   #status    { order: 3; }
   .setup select, .setup input, .setup button { font-size: 11px; padding: 5px 4px; min-height: 34px; }
   .symbol-popover { width: min(92vw, 360px); max-height: 50vh; }
-  /* Dropdowns share the single setup strip and need finger-sized hit targets. */
-  .setup > .dd { flex: 1 1 0; min-width: 0; }
-  .dd .dd-trigger { justify-content: space-between; font-size: 11px; padding: 5px 4px; min-height: 34px; }
-  .dd .dd-popover { width: max(100%, 116px); max-height: 50vh; }
+  /* Dropdowns share the single setup strip. Size each to its label (no caret,
+     no row-filling stretch) so they don't hog space, and keep a finger-sized
+     tap height. */
+  .setup > .dd { flex: 0 1 auto; min-width: 0; }
+  .dd .dd-trigger { justify-content: center; font-size: 11px; padding: 5px 10px; min-height: 34px; }
+  .dd .dd-trigger .dd-label { flex: 0 1 auto; text-align: center; }
+  .dd .dd-popover { width: max-content; min-width: 100%; max-width: 92vw; max-height: 50vh; }
   .dd .dd-row { padding: 10px 12px; font-size: 13px; }
 
   .side-pane {
@@ -335,6 +342,11 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   button, .pick, .tool { min-height: 36px; }
   .user-avatar { width: 36px; height: 36px; font-size: 14px; }
   .symbol-row .symbol-add, .symbol-row .symbol-del { width: 36px; height: 36px; }
+  /* Tools/Indicators launchers: the 36px min-height above would stretch them
+     into tall rectangles — pin equal width+height so they stay square. The
+     descendant selector outranks the base `.overlay-launcher` rule (defined
+     later in the file) so the width override actually wins. */
+  .overlay-launchers .overlay-launcher { width: 36px; height: 36px; }
   .controls-center button { min-width: 64px; padding: 8px 12px; }
   .chart-toolbar { flex-wrap: wrap; }
   .drawer-toggle { display: none; }
@@ -393,7 +405,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 }
 .overlay-launcher svg { width: 18px; height: 18px; display: block; }
 .overlay-launcher:hover { color: #e6e9ee; background: rgba(42, 46, 57, 0.92); }
-.overlay-launcher[aria-expanded="true"], .overlay-launcher.active { color: #ffb74d; border-color: #3a4255; background: #2a2e39; }
+.overlay-launcher[aria-expanded="true"], .overlay-launcher.active { color: #26a69a; border-color: #3a4255; background: #2a2e39; }
 .overlay-panel {
   position: absolute; top: 0; left: calc(100% + 6px);
   min-width: 168px;
@@ -414,8 +426,8 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 }
 .overlay-row svg { flex-shrink: 0; opacity: 0.85; }
 .overlay-row:hover { background: #2a2e39; color: #d1d4dc; }
-/* active indicator / armed tool — brighter foreground */
-.overlay-row.active, .overlay-row.armed { color: #ffb74d; }
+/* active indicator / armed tool — backtick teal foreground */
+.overlay-row.active, .overlay-row.armed { color: #26a69a; }
 .overlay-row.active svg, .overlay-row.armed svg { opacity: 1; }
 /* icon-only strip (tools panel): centered glyphs, no labels */
 .overlay-panel.icon-strip { min-width: 0; }
@@ -472,6 +484,17 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
    chart (see app.js relayoutSubPanes), so there are no separate sub-pane divs. */
 .chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 #chart { flex: 1; min-height: 0; }
+/* Fat overlay grab-strips over each indicator-pane separator (positioned in JS,
+   see positionPaneHandles). Wider hit area than LWC's own 1px separator. */
+.pane-resize {
+  position: absolute; left: 0; right: 0; height: 16px; z-index: 30;
+  display: none; cursor: ns-resize; touch-action: none;
+}
+.pane-resize::before {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 44px; height: 4px; border-radius: 3px; background: #3a4150;
+}
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
 #chart.hline-hover, #chart.hline-hover canvas { cursor: row-resize !important; }
 /* drawer resize handle: mobile-only (shown in the media query); hidden on
@@ -499,7 +522,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .mode-pill button { display: inline-flex; align-items: center; background: transparent; color: #8a93a3; border: 0; border-radius: 4px; padding: 4px 9px; font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4; }
 .mode-pill button svg { display: block; }
 .mode-pill button:hover { color: #d1d4dc; }
-.mode-pill button.active { background: #ffb74d; color: #1e222d; font-weight: 600; }
+.mode-pill button.active { background: #26a69a; color: #0f1218; font-weight: 600; }
 
 /* Replay transport icon buttons (Previous / Play-Pause / Next) */
 .controls-center .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px; min-width: 44px; }
@@ -539,7 +562,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .row.sltp-pair { gap: 8px; }
 .sltp-group { flex: 1 1 0; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .sltp-group label.toggle-label { flex: 0 0 auto; }
-.sltp-group input[type=number] { flex: 1 1 auto; min-width: 0; width: auto; }
+.sltp-group input[type=number] { flex: 1 1 auto; min-width: 0; width: auto; text-align: center; }
 .sltp-group .pick { flex: 0 0 auto; }
 .row input, .row select { width: 100%; background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 6px; }
 .row input:disabled { opacity: 0.4; }
@@ -653,7 +676,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     width: 52px; min-width: 0; box-sizing: border-box;
     background: #161a22; border: 1px solid #2a2e39; border-radius: 6px;
     color: #e6e9ee; font-size: 11px; padding: 2px 6px; min-height: 22px;
-    font-variant-numeric: tabular-nums;
+    text-align: center; font-variant-numeric: tabular-nums;
   }
   .mtb-chip {
     flex: 0 0 auto; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;

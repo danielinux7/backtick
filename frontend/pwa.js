@@ -197,8 +197,12 @@
     };
     // Start collapsed so the chart owns the whole viewport on first paint.
     setCollapsed(true);
+    // A drag that started on the tab strip must not also toggle the tab on the
+    // trailing click — this one-shot flag swallows it.
+    let suppressTabClick = false;
     tabs.forEach((btn) => {
       btn.addEventListener("click", () => {
+        if (suppressTabClick) { suppressTabClick = false; return; }
         const collapsed = pane.dataset.collapsed === "true";
         if (collapsed) {                       // closed → open to this tab
           selectTab(btn.dataset.tab);
@@ -212,31 +216,46 @@
     });
 
     // Drag the top edge of the drawer to resize it (mobile). Mirrors the
-    // RSI/CVD pane-resize handles: pointer events so touch works.
-    const handle = document.getElementById("drawer-resize");
-    if (handle) {
-      handle.addEventListener("pointerdown", (e) => {
+    // RSI/CVD pane-resize handles: pointer events so touch works. The whole
+    // drawer header is grabbable — the dedicated handle AND the tab strip — so
+    // it's easy to land on. On the tab strip we use a small move threshold so a
+    // tap still switches tabs while a drag resizes.
+    const tabStrip = document.getElementById("drawer-tabs");
+    const beginDrawerDrag = (e, el, threshold = 0) => {
+      const startY = e.clientY;
+      const startH = pane.getBoundingClientRect().height;
+      let dragging = threshold === 0;
+      if (dragging) {
         e.preventDefault();
-        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
-        const startY = e.clientY;
-        const startH = pane.getBoundingClientRect().height;
-        if (pane.dataset.collapsed === "true") setCollapsed(false);   // dragging expands
-        const onMove = (ev) => {
-          const dy = startY - ev.clientY;        // drag up = taller
-          const h = Math.max(40, Math.min(window.innerHeight * 0.85, startH + dy));
-          drawerHeight = h + "px";
-          pane.style.height = drawerHeight;
-        };
-        const onUp = () => {
-          handle.removeEventListener("pointermove", onMove);
-          handle.removeEventListener("pointerup", onUp);
-          handle.removeEventListener("pointercancel", onUp);
-        };
-        handle.addEventListener("pointermove", onMove);
-        handle.addEventListener("pointerup", onUp);
-        handle.addEventListener("pointercancel", onUp);
-      });
-    }
+        try { el.setPointerCapture(e.pointerId); } catch (_) {}
+        if (pane.dataset.collapsed === "true") setCollapsed(false);
+      }
+      const onMove = (ev) => {
+        const dy = startY - ev.clientY;        // drag up = taller
+        if (!dragging) {
+          if (Math.abs(dy) < threshold) return;
+          dragging = true;
+          try { el.setPointerCapture(ev.pointerId); } catch (_) {}
+          if (pane.dataset.collapsed === "true") setCollapsed(false);
+        }
+        const h = Math.max(40, Math.min(window.innerHeight * 0.85, startH + dy));
+        drawerHeight = h + "px";
+        pane.style.height = drawerHeight;
+      };
+      const onUp = () => {
+        el.removeEventListener("pointermove", onMove);
+        el.removeEventListener("pointerup", onUp);
+        el.removeEventListener("pointercancel", onUp);
+        if (dragging && threshold > 0) suppressTabClick = true;
+      };
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerup", onUp);
+      el.addEventListener("pointercancel", onUp);
+    };
+
+    const handle = document.getElementById("drawer-resize");
+    if (handle) handle.addEventListener("pointerdown", (e) => beginDrawerDrag(e, handle));
+    if (tabStrip) tabStrip.addEventListener("pointerdown", (e) => beginDrawerDrag(e, tabStrip, 6));
   }
 
   // Mobile collapsible rows — Tools (chart-toolbar) and Indicators. Tapping

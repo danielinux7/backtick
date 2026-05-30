@@ -66,7 +66,7 @@
         <option value="futures">futures</option>
       </select>
       <select name="tf" id="tf-select"></select>
-      <input name="replay_date" id="replay-date" placeholder="dd/mm/yyyy" style="width:120px" />
+      <input name="replay_date" id="replay-date" placeholder="dd/mm/yyyy" />
       <span id="live-indicator" class="live-indicator" style="display:none">● LIVE</span>
     </form>
     <div id="status"></div>
@@ -216,13 +216,13 @@
         </div>
         <div class="row sltp-pair">
           <div class="sltp-group">
-            <label class="toggle-label" for="use-sl"><input type="checkbox" id="use-sl" /> SL %</label>
-            <input type="number" id="t-sl-pct" step="0.01" placeholder="off" disabled />
+            <label class="toggle-label" for="use-sl"><input type="checkbox" id="use-sl" checked /> SL %</label>
+            <input type="number" id="t-sl-pct" step="0.01" placeholder="off" value="1" />
             <button type="button" class="pick" data-pick="sl" title="set SL from chart">&#127919;</button>
           </div>
           <div class="sltp-group">
-            <label class="toggle-label" for="use-tp"><input type="checkbox" id="use-tp" /> TP %</label>
-            <input type="number" id="t-tp-pct" step="0.01" placeholder="off" disabled />
+            <label class="toggle-label" for="use-tp"><input type="checkbox" id="use-tp" checked /> TP %</label>
+            <input type="number" id="t-tp-pct" step="0.01" placeholder="off" value="1" />
             <button type="button" class="pick" data-pick="tp" title="set TP from chart">&#127919;</button>
           </div>
         </div>
@@ -264,10 +264,10 @@
        (then drag them on the chart). Hidden on desktop via CSS. -->
   <div id="mobile-trade-bar" aria-hidden="true">
     <div class="mtb-toggles">
-      <button type="button" id="m-use-sl" class="mtb-chip" aria-pressed="false">SL</button>
-      <input type="number" id="m-sl-pct" class="mtb-pct" step="0.01" min="0" placeholder="%" inputmode="decimal" />
-      <input type="number" id="m-tp-pct" class="mtb-pct" step="0.01" min="0" placeholder="%" inputmode="decimal" />
-      <button type="button" id="m-use-tp" class="mtb-chip" aria-pressed="false">TP</button>
+      <button type="button" id="m-use-sl" class="mtb-chip" aria-pressed="true">SL</button>
+      <input type="number" id="m-sl-pct" class="mtb-pct" step="0.01" min="0" value="1" placeholder="%" inputmode="decimal" />
+      <input type="number" id="m-tp-pct" class="mtb-pct" step="0.01" min="0" value="1" placeholder="%" inputmode="decimal" />
+      <button type="button" id="m-use-tp" class="mtb-chip" aria-pressed="true">TP</button>
     </div>
     <div class="mtb-main">
       <button type="button" id="m-sell" class="mtb-side mtb-sell">
