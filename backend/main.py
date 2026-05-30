@@ -16,7 +16,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from .aggtrades import fetch_agg_trades, fetch_rest_recent
 from .auth import _cookie_kwargs, create_guest, current_user, current_user_optional, is_production
-from .binance import TF_MS, VALID_TFS, fetch_klines
+from .binance import TF_MS, VALID_TFS, RateLimitedError, fetch_klines
 from .db import Base, engine, get_db
 from .models import User
 from .replay import SessionStore, Trade
@@ -179,6 +179,8 @@ async def create_session(
         sess = store.create(req.symbol, req.market, req.tf, req.start, req.end,
                             warmup=req.warmup, replay_ts=req.replay_ts, live=req.live,
                             inherit_trades=req.inherit_trades, user_id=user.id)
+    except RateLimitedError as e:
+        raise HTTPException(429, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
     except Exception as e:
@@ -215,6 +217,8 @@ async def extend_history(
         end_iso = dt.datetime.fromtimestamp(end_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
         try:
             new_df = fetch_klines(sess.symbol, sess.tf, start_iso, end_iso, market=sess.market)
+        except RateLimitedError as e:
+            raise HTTPException(429, str(e)) from e
         except Exception as e:
             raise HTTPException(502, f"history fetch failed: {e}") from e
         new_df = new_df[new_df["time"] < first_time].reset_index(drop=True)
