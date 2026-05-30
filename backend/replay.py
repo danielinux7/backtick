@@ -181,6 +181,58 @@ class Session:
             return int(self.tick_aggs.iloc[self.tick_idx - 1]["time_ms"] // 1000)
         return int(self.df["time"].iloc[self.cursor])
 
+    def modify_trade(self, tid: str, *, sl=None, tp=None,
+                     limit_price=None, qty=None,
+                     clear_sl=False, clear_tp=False) -> Trade:
+        """Edit a still-active trade in place. Only non-None args change a field
+        (so callers patch one level at a time, e.g. a single dragged SL line);
+        clear_sl / clear_tp remove that level entirely. Mirrors the placement-time
+        validation in main.place_trade: limit_price only while pending, SL/TP must
+        sit on the correct side of the reference (limit for pending, entry for
+        open). Raises KeyError if the trade isn't active, ValueError on an invalid
+        level."""
+        t = next((x for x in self.trades
+                  if x.id == tid and x.status in ("open", "pending")), None)
+        if t is None:
+            raise KeyError(tid)
+
+        new_qty = t.qty if qty is None else float(qty)
+        if not (new_qty > 0):
+            raise ValueError("qty must be > 0")
+
+        new_limit = t.limit_price
+        if limit_price is not None:
+            if t.status != "pending":
+                raise ValueError("limit_price can only change while order is pending")
+            lp = float(limit_price)
+            mark = self.current_price()
+            if t.side == "long" and lp >= mark:
+                raise ValueError("long limit must be below market price")
+            if t.side == "short" and lp <= mark:
+                raise ValueError("short limit must be above market price")
+            new_limit = lp
+
+        new_sl = None if clear_sl else (t.sl if sl is None else float(sl))
+        new_tp = None if clear_tp else (t.tp if tp is None else float(tp))
+        ref = new_limit if t.status == "pending" else t.entry_price
+        if ref is not None:
+            if t.side == "long":
+                if new_sl is not None and new_sl >= ref:
+                    raise ValueError("long SL must be below entry")
+                if new_tp is not None and new_tp <= ref:
+                    raise ValueError("long TP must be above entry")
+            else:
+                if new_sl is not None and new_sl <= ref:
+                    raise ValueError("short SL must be above entry")
+                if new_tp is not None and new_tp >= ref:
+                    raise ValueError("short TP must be below entry")
+
+        t.qty = new_qty
+        t.limit_price = new_limit
+        t.sl = new_sl
+        t.tp = new_tp
+        return t
+
     def _load_tick_aggs(self) -> None:
         if self.cursor + 1 >= len(self.df):
             self.tick_aggs = None

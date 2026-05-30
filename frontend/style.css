@@ -182,8 +182,12 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
   animation: live-pulse 1.5s ease-in-out infinite; }
 @keyframes live-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.55 } }
 /* hide replay-only controls in live mode */
-.live-mode .controls,
-.live-mode #replay-date { display: none !important; }
+.live-mode .controls { display: none !important; }
+/* The replay date picker only makes sense in Replay mode. Hide it by default
+   (so Live — and any state before JS runs — never shows it) and reveal it ONLY
+   when JS has explicitly put the body in replay mode. */
+#replay-date { display: none !important; }
+body.replay-mode #replay-date { display: inline-block !important; }
 
 main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
 .drawer-toggle { display: none; background: none; border: 0; color: inherit; font: inherit; }
@@ -207,6 +211,9 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     grid-template-columns: 1fr;
     grid-template-rows: 1fr auto;
     height: auto;
+    /* reserve room for the fixed Sell|Lots|Buy bar so the drawer/tabs aren't
+       hidden behind it */
+    padding-bottom: calc(var(--mbar-h, 84px) + env(safe-area-inset-bottom));
   }
   header {
     padding: 6px 8px;
@@ -218,17 +225,14 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   /* Row 1: brand left, avatar right. Row 2: setup, single horizontal strip. */
   .brand     { order: 0; }
   .user-info { order: 1; width: auto; margin-left: auto; padding-top: 0; border-top: 0; }
-  /* Wrap onto multiple rows rather than a horizontal-scroll strip: on a phone
-     the scrollbar is invisible, so controls (tf, market, Load) silently clipped
-     off the right edge. Wrapping keeps every control reachable. */
-  .setup     { order: 2; flex: 1 0 100%; flex-wrap: wrap; gap: 4px; }
-  .setup > * { flex-shrink: 0; }
-  .setup > .symbol-picker { flex: 1 1 140px; }
+  /* One horizontal strip, no wrap and no horizontal scroll: every control
+     shrinks to share the row (mode, symbol, market, tf, date). */
+  .setup     { order: 2; flex: 1 0 100%; flex-wrap: nowrap; gap: 4px; }
+  .setup > * { flex: 1 1 0; min-width: 0; }
   .setup > .symbol-picker > input { width: 100%; min-width: 0; }
-  .setup > select[name="market"], .setup > #tf-select { flex: 1 1 auto; min-width: 72px; }
+  .setup .live-indicator { display: none; }
   #status    { order: 3; }
-  .setup select, .setup input, .setup button { font-size: 12px; padding: 6px 8px; min-height: 36px; }
-  .setup input[name="warmup"] { width: 64px !important; }
+  .setup select, .setup input, .setup button { font-size: 11px; padding: 5px 4px; min-height: 34px; }
   .symbol-popover { width: min(92vw, 360px); max-height: 50vh; }
 
   .side-pane {
@@ -241,15 +245,14 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     flex-shrink: 0;
     padding-bottom: max(0px, env(safe-area-inset-bottom));
   }
-  .side-pane[data-collapsed="true"] { height: 44px; overflow: hidden; }
-  /* Tab strip inside the drawer — pick one of Trade/Tape/History at a time so
-     each tab gets the full drawer body instead of three panels fighting for
-     scraps of vertical space. */
+  .side-pane[data-collapsed="true"] { height: 40px; overflow: hidden; }
+  /* Tab strip doubles as the expand/collapse control: it's always visible (even
+     when collapsed) so the chart keeps maximum height until a tab is tapped. */
   .drawer-tabs {
     display: flex;
     background: #0f1218;
     border-bottom: 1px solid #1e222d;
-    position: sticky; top: 40px; z-index: 4;
+    position: sticky; top: 0; z-index: 4;
   }
   .drawer-tabs button {
     flex: 1; background: transparent; color: #8a93a3;
@@ -259,29 +262,32 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     cursor: pointer; min-height: 40px;
   }
   .drawer-tabs button.active { color: #26a69a; border-bottom-color: #26a69a; }
-  .side-pane[data-tab="trade"]   > .tape-panel,
-  .side-pane[data-tab="trade"]   > .trades-panel,
-  .side-pane[data-tab="tape"]    > .trade-panel,
+  /* While collapsed no tab is "current" — the highlight only appears once a tab
+     is tapped and the drawer expands. */
+  .side-pane[data-collapsed="true"] .drawer-tabs button.active {
+    color: #8a93a3; border-bottom-color: transparent;
+  }
+  /* Draggable top edge of the drawer (hidden when collapsed). */
+  .side-pane > .drawer-resize {
+    display: block; height: 14px; flex-shrink: 0; cursor: ns-resize;
+    touch-action: none; background: #0f1218;
+    position: sticky; top: 0; z-index: 7;
+  }
+  .drawer-resize::before {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    width: 36px; height: 4px; border-radius: 2px; background: #3a4150;
+  }
+  .side-pane[data-collapsed="true"] .drawer-resize { display: none; }
+  .side-pane .drawer-tabs { top: 14px; }      /* sit below the resize handle */
+  /* Mobile order entry lives in the fixed bottom bar, so the form panel is
+     hidden here; the drawer holds only Tape + History. */
+  .side-pane > .trade-panel { display: none; }
   .side-pane[data-tab="tape"]    > .trades-panel,
-  .side-pane[data-tab="history"] > .trade-panel,
   .side-pane[data-tab="history"] > .tape-panel { display: none; }
   /* Per-panel h3 headers become redundant (tab strip already labels them). */
-  .side-pane > .trade-panel  > h3,
   .side-pane > .tape-panel   > h3,
   .side-pane > .trades-panel > h3 { display: none; }
-  /* When collapsed the tab strip hides too (only the toggle bar shows). */
-  .side-pane[data-collapsed="true"] .drawer-tabs { display: none; }
-  .side-pane .drawer-toggle {
-    position: sticky; top: 0; width: 100%;
-    display: flex; align-items: center; justify-content: space-between;
-    background: #0f1218; border-bottom: 1px solid #1e222d;
-    padding: 8px 12px; font-size: 13px; font-weight: 600;
-    color: #d1d4dc;
-    cursor: pointer; user-select: none; z-index: 5;
-    min-height: 40px;
-  }
-  .side-pane .drawer-toggle::after { content: "▾"; font-size: 11px; opacity: 0.7; }
-  .side-pane[data-collapsed="true"] .drawer-toggle::after { transform: rotate(180deg); }
 
   /* Touch-friendly hit targets — but small icon buttons (avatar, +/× in the
      symbol popover) get explicit equal width+height so they stay square
@@ -291,6 +297,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .symbol-row .symbol-add, .symbol-row .symbol-del { width: 36px; height: 36px; }
   .controls-center button { min-width: 64px; padding: 8px 12px; }
   .chart-toolbar { flex-wrap: wrap; }
+  .drawer-toggle { display: none; }
 
   /* Collapsible Tools + Indicators rows. The dropdown trigger lives as the
      first child of each row; the row's other children hide until the user
@@ -313,27 +320,12 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .indicators.open > *:not(.mobile-toggle) { display: inline-flex; align-items: center; gap: 4px; }
 
   /* Chart container should never lose touch gestures to native scroll */
-  #chart, #rsi-chart, #cvd-chart { touch-action: none; }
+  #chart { touch-action: none; }
 
-  .drawer-toggle { display: flex; }
-
-  /* Replay controls: the desktop `1fr auto 1fr` grid collides on a phone
-     (Step/Speed, Prev/Play/Next, and the cursor readout overlap). Stack them
-     into rows — primary step buttons first as full-width touch targets.
-     Scoped under `.chart-pane` so these win over the base `.controls` grid
-     rule, which is defined later in the file (media queries add no specificity). */
-  /* On phones the controls return to a normal in-flow bar at the bottom of the
-     chart stack (no floating overlay / pills), stacked into rows. */
-  .chart-pane .controls { position: static; pointer-events: auto;
-    display: flex; flex-direction: column; align-items: stretch; gap: 8px;
-    padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; }
-  .chart-pane .controls-left, .chart-pane .controls-center {
-    background: none; border: 0; padding: 0; backdrop-filter: none; }
-  .chart-pane .controls-center { order: -1; }
-  .chart-pane .controls-center button { flex: 1; }
-  .chart-pane .controls-left { justify-content: space-between; }
-  .chart-pane .controls-left label { flex: 1; }
-  .chart-pane .controls-left select, .chart-pane .controls-left input { flex: 1; min-width: 0; }
+  /* Replay controls row under the chart — centered, just smaller on mobile. */
+  .chart-pane .controls { gap: 6px; padding: 5px 8px; }
+  .chart-pane .controls-left, .chart-pane .controls-center { padding: 3px 6px; gap: 6px; }
+  .chart-pane .controls-center button { min-width: 0; padding: 6px 9px; }
 
   /* Keep trade-form labels (e.g. "Side for picks") on one line; let the
      adjacent control flex into the remaining width instead of forcing the
@@ -348,16 +340,18 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 /* ---------- Chart overlay launchers (Tools + Indicators) ----------
    Two icon buttons anchored top-right of the chart, each opening a vertical
    popover panel. Brightness conveys state (active indicators / armed tools). */
-.overlay-launchers { position: absolute; top: 8px; left: 12px; z-index: 40; display: flex; flex-direction: column; gap: 6px; }
+.overlay-launchers { position: absolute; top: 8px; left: 12px; z-index: 40; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .overlay-group { position: relative; }
 .overlay-launcher {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px;
+  box-sizing: border-box; flex: 0 0 auto;
+  width: 30px; height: 30px; padding: 0;
   background: rgba(22, 26, 34, 0.82); color: #b0b6c0;
   border: 1px solid #2a2e39; border-radius: 6px;
   cursor: pointer; backdrop-filter: blur(2px);
   transition: color 0.1s, background 0.1s, border-color 0.1s;
 }
+.overlay-launcher svg { width: 18px; height: 18px; display: block; }
 .overlay-launcher:hover { color: #e6e9ee; background: rgba(42, 46, 57, 0.92); }
 .overlay-launcher[aria-expanded="true"], .overlay-launcher.active { color: #ffb74d; border-color: #3a4255; background: #2a2e39; }
 .overlay-panel {
@@ -419,37 +413,39 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .hp-style.dashed span { border-bottom-style: dashed; }
 .hp-style.active, .hp-style:focus { color: #ffb74d; }
 .hp-del:hover { background: rgba(239,83,80,0.16) !important; color: #ef5350 !important; }
+/* order-line tap popup (mobile): edit qty / add SL·TP / close */
+.order-popup .op-qty { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #b0b6c0; }
+.order-popup .op-qty input { width: 64px; background: #1e222d; border: 1px solid #2a2e39; border-radius: 5px; color: #e6e9ee; padding: 4px 6px; font-size: 12px; }
+/* no spinner steppers on the chart popup's number fields (Qty, SL %, TP %) */
+.order-popup input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+.order-popup input[type=number]::-webkit-outer-spin-button,
+.order-popup input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.order-popup .op-btn { font-size: 12px; font-weight: 600; padding: 5px 9px; border: 1px solid #2a2e39 !important; color: #c9cdd6; }
+.order-popup .op-btn:hover { background: #2a2e39; color: #e6e9ee; }
+.order-popup .op-close { color: #ef9a9a; }
+.order-popup .op-close:hover { background: rgba(239,83,80,0.16); color: #ef5350; }
+/* icon-only action (close/cancel order, remove SL/TP) — square button */
+.order-popup .op-icon { display: inline-flex; align-items: center; justify-content: center; padding: 4px; }
+.order-popup .op-icon svg { display: block; }
 
+/* The chart fills the stack; RSI/CVD render as native sub-panes INSIDE this one
+   chart (see app.js relayoutSubPanes), so there are no separate sub-pane divs. */
 .chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 #chart { flex: 1; min-height: 0; }
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
 #chart.hline-hover, #chart.hline-hover canvas { cursor: row-resize !important; }
-/* sub-pane visibility — no height transition so the chart's autoSize doesn't
-   redraw at every interpolated height (was causing initial flicker).
-   Inline style.height (set by the resize handle) overrides the defaults. */
-#rsi-chart { height: 0; }
-#rsi-chart.visible { height: 160px; }
-#cvd-chart { height: 0; }
-#cvd-chart.visible { height: 140px; }
+/* drawer resize handle: mobile-only (shown in the media query); hidden on
+   desktop where the side-pane is a fixed left column. */
+.drawer-resize { display: none; }
 
-.pane-resize {
-  height: 5px; flex-shrink: 0; background: #1e222d;
-  cursor: ns-resize; border-top: 1px solid #2a2e39;
-}
-.pane-resize:hover { background: #2962ff; }
-.pane-resize.hidden { display: none; }
-
-/* Floating replay controls overlaid on the bottom of the chart — a centered
-   pill cluster (mode/speed + transport) with the cursor readout tucked into the
-   bottom-left. The container is click-through; only the pills capture pointer
-   events, so the chart stays draggable in the gaps around them. */
-.controls { position: absolute; left: 0; right: 0; bottom: 40px; z-index: 40;
-  display: flex; justify-content: center; align-items: flex-end; gap: 8px;
-  padding: 0 14px; pointer-events: none; }
+/* Replay controls sit in their own row UNDER the chart (left-aligned) — not
+   overlaid, so they never block the indicator sub-panes at the chart's bottom. */
+.controls { flex: 0 0 auto; z-index: 40;
+  display: flex; justify-content: flex-start; align-items: center; gap: 8px;
+  padding: 6px 14px; background: #0f1218; border-top: 1px solid #1e222d; }
 .controls-left, .controls-center { display: flex; gap: 8px; align-items: center;
-  pointer-events: auto; background: rgba(22, 26, 34, 0.82);
-  border: 1px solid #2a2e39; border-radius: 8px; padding: 4px 8px;
-  backdrop-filter: blur(2px); }
+  background: rgba(22, 26, 34, 0.82);
+  border: 1px solid #2a2e39; border-radius: 8px; padding: 4px 8px; }
 .controls-left label { display: flex; align-items: center; gap: 4px;
   font-size: 12px; color: #b0b6c0; }
 .controls button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
@@ -597,3 +593,113 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .flatpickr-day { color: #d1d4dc; }
 .flatpickr-day.today { border-color: #2962ff; }
 .flatpickr-day.selected, .flatpickr-day.startRange, .flatpickr-day.endRange { background: #2962ff; border-color: #2962ff; }
+
+/* ---------- Mobile fixed order bar (Sell | Lots | Buy) ---------- */
+#mobile-trade-bar { display: none; }
+@media (max-width: 900px) {
+  :root { --mbar-h: 96px; }
+  #mobile-trade-bar {
+    display: flex; flex-direction: column; gap: 4px;
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+    box-sizing: border-box;
+    padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+    background: #0b0e13; border-top: 1px solid #1e222d;
+  }
+  .mtb-toggles { display: flex; gap: 6px; align-items: center; justify-content: center; }
+  .mtb-pct {
+    width: 52px; min-width: 0; box-sizing: border-box;
+    background: #161a22; border: 1px solid #2a2e39; border-radius: 6px;
+    color: #e6e9ee; font-size: 11px; padding: 2px 6px; min-height: 22px;
+    font-variant-numeric: tabular-nums;
+  }
+  .mtb-chip {
+    flex: 0 0 auto; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+    color: #8a93a3; background: #161a22; border: 1px solid #2a2e39;
+    border-radius: 6px; padding: 2px 14px; min-height: 22px; cursor: pointer;
+  }
+  /* pressed chips mirror the Sell (orange) / Buy (green) buttons, glossy */
+  .mtb-chip[aria-pressed="true"] {
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.4), 0 1px 3px rgba(0,0,0,0.4);
+  }
+  #m-use-sl[aria-pressed="true"] {
+    border-color: #c64e1c;
+    background: linear-gradient(180deg, #f47a45 0%, #e8622a 55%, #c64e1c 100%);
+  }
+  #m-use-tp[aria-pressed="true"] {
+    border-color: #168a30;
+    background: linear-gradient(180deg, #38c257 0%, #1fa53a 55%, #168a30 100%);
+  }
+  /* Sell | Lots | Buy — two big rounded pills (orange / green) with a black
+     Lots pill floating over the seam between them (matches the design ref). */
+  .mtb-main { position: relative; display: flex; justify-content: center; gap: 2px; align-items: stretch; min-height: 50px; }
+  .mtb-side {
+    position: relative; overflow: hidden;
+    flex: 0 1 150px; min-width: 0; display: flex; align-items: center;
+    border: 0; padding: 0; color: #fff;
+    cursor: pointer; touch-action: none; user-select: none;
+    /* 3D: top inset highlight, bottom inset shade, soft drop shadow */
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.45),
+                inset 0 -3px 6px rgba(0,0,0,0.30),
+                0 2px 5px rgba(0,0,0,0.45);
+  }
+  /* glossy sheen over the top half */
+  .mtb-side::before {
+    content: ""; position: absolute; inset: 0 0 52% 0; border-radius: inherit;
+    background: linear-gradient(180deg, rgba(255,255,255,0.34), rgba(255,255,255,0));
+    pointer-events: none;
+  }
+  .mtb-side:active { box-shadow: inset 0 2px 6px rgba(0,0,0,0.4); }
+  .mtb-sell {
+    justify-content: flex-start; border-radius: 18px 8px 8px 18px;
+    background: linear-gradient(180deg, #f47a45 0%, #e8622a 48%, #c64e1c 100%);
+  }
+  .mtb-buy  {
+    justify-content: flex-end; border-radius: 8px 18px 18px 8px;
+    background: linear-gradient(180deg, #38c257 0%, #1fa53a 48%, #168a30 100%);
+  }
+  /* dotted grip on the outer edge — affords "drag onto the chart for a limit". */
+  .mtb-grip {
+    flex: 0 0 10px; align-self: stretch; margin: 7px 8px; opacity: 0.55;
+    background-image: radial-gradient(currentColor 1.1px, transparent 1.4px);
+    background-size: 5px 6px; background-position: center;
+  }
+  .mtb-text {
+    flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+    justify-content: center; gap: 2px; padding: 6px 12px;
+  }
+  .mtb-sell .mtb-text { align-items: flex-start; padding-right: 38px; }
+  .mtb-buy  .mtb-text { align-items: flex-end;   padding-left: 38px; }
+  .mtb-label { font-size: 12px; font-weight: 600; opacity: 0.92; }
+  .mtb-quote { display: inline-flex; align-items: center; gap: 4px; }
+  .mtb-price { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .mtb-arrow { font-size: 12px; opacity: 0.9; }
+  .mtb-lots {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    z-index: 2; flex: 0 0 auto; width: 58px; box-sizing: border-box; height: calc(100% + 6px);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 0; background: #0a0d12; border: 1px solid #20262f;
+    border-radius: 12px; padding: 2px 6px; box-shadow: 0 2px 9px rgba(0,0,0,0.55);
+  }
+  .mtb-lots-head { font-size: 9px; color: #8a93a3; display: inline-flex; align-items: center; gap: 3px; }
+  .mtb-caret { font-size: 9px; opacity: 0.8; }
+  .mtb-lots > input {
+    width: 100%; text-align: center; background: transparent; border: 0;
+    color: #f3f5f8; font-size: 14px; font-weight: 700; min-width: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  /* no spinner steppers on the bar's number fields (Lots, SL/TP %) */
+  #mobile-trade-bar input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+  #mobile-trade-bar input[type=number]::-webkit-outer-spin-button,
+  #mobile-trade-bar input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  /* ghost line that follows the finger while dragging Buy/Sell onto the chart */
+  #limit-ghost {
+    position: absolute; left: 0; right: 0; z-index: 45;
+    border-top: 1px dashed #90caf9; pointer-events: none;
+  }
+  #limit-ghost::after {
+    content: attr(data-price); position: absolute; right: 2px; top: -16px;
+    font-size: 11px; color: #0b0e13; background: #90caf9; padding: 0 4px;
+    border-radius: 3px; font-variant-numeric: tabular-nums;
+  }
+}

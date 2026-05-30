@@ -77,10 +77,6 @@
     <section class="chart-pane">
       <div class="chart-stack">
         <div id="chart"></div>
-        <div class="pane-resize hidden" data-target="rsi"></div>
-        <div id="rsi-chart"></div>
-        <div class="pane-resize hidden" data-target="cvd"></div>
-        <div id="cvd-chart"></div>
         <div id="arm-hint" class="arm-hint" style="display:none"></div>
         <span id="measure-summary" class="measure-readout"></span>
 
@@ -149,8 +145,9 @@
             </div>
           </div>
         </div>
+      </div>
 
-        <div class="controls">
+      <div class="controls">
           <div class="controls-left">
             <div class="mode-pill" id="speed-mode" role="tablist" aria-label="Replay mode">
               <button type="button" data-mode="tick" class="active" role="tab" aria-selected="true" title="Tick replay" aria-label="Tick replay">
@@ -192,14 +189,12 @@
             </button>
           </div>
         </div>
-      </div>
     </section>
 
-    <aside class="side-pane" id="side-pane" data-tab="trade">
-      <button type="button" class="drawer-toggle" id="drawer-toggle" aria-expanded="true">Trade · Tape · History</button>
+    <aside class="side-pane" id="side-pane" data-tab="tape">
+      <div class="drawer-resize" id="drawer-resize" title="Drag to resize"></div>
       <div class="drawer-tabs" id="drawer-tabs" role="tablist">
-        <button type="button" data-tab="trade" class="active" role="tab" aria-selected="true">Trade</button>
-        <button type="button" data-tab="tape"  role="tab" aria-selected="false">Tape</button>
+        <button type="button" data-tab="tape"  class="active" role="tab" aria-selected="true">Tape</button>
         <button type="button" data-tab="history" role="tab" aria-selected="false">History</button>
       </div>
       <div class="trade-panel">
@@ -263,6 +258,38 @@
       </div>
     </aside>
   </main>
+
+  <!-- Mobile-only fixed order bar. Tap Buy/Sell = market; drag onto the chart
+       (or long-press then tap) = limit. SL/TP chips attach default-offset levels
+       (then drag them on the chart). Hidden on desktop via CSS. -->
+  <div id="mobile-trade-bar" aria-hidden="true">
+    <div class="mtb-toggles">
+      <button type="button" id="m-use-sl" class="mtb-chip" aria-pressed="false">SL</button>
+      <input type="number" id="m-sl-pct" class="mtb-pct" step="0.01" min="0" placeholder="%" inputmode="decimal" />
+      <button type="button" id="m-use-tp" class="mtb-chip" aria-pressed="false">TP</button>
+      <input type="number" id="m-tp-pct" class="mtb-pct" step="0.01" min="0" placeholder="%" inputmode="decimal" />
+    </div>
+    <div class="mtb-main">
+      <button type="button" id="m-sell" class="mtb-side mtb-sell">
+        <span class="mtb-grip" aria-hidden="true"></span>
+        <span class="mtb-text">
+          <span class="mtb-label">Sell</span>
+          <span class="mtb-quote"><span class="mtb-price" id="m-sell-price">—</span><span class="mtb-arrow">&#8595;</span></span>
+        </span>
+      </button>
+      <label class="mtb-lots">
+        <span class="mtb-lots-head">Lots <span class="mtb-caret">&#8964;</span></span>
+        <input type="number" id="m-lots" value="1" step="any" min="0" inputmode="decimal" />
+      </label>
+      <button type="button" id="m-buy" class="mtb-side mtb-buy">
+        <span class="mtb-text">
+          <span class="mtb-label">Buy</span>
+          <span class="mtb-quote"><span class="mtb-arrow">&#8595;</span><span class="mtb-price" id="m-buy-price">—</span></span>
+        </span>
+        <span class="mtb-grip" aria-hidden="true"></span>
+      </button>
+    </div>
+  </div>
 
   <div class="modal-backdrop" id="auth-modal" hidden>
     <div class="modal-card auth-card" role="dialog" aria-modal="true" aria-label="Sign in or sign up">

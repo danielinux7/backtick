@@ -171,37 +171,72 @@
     showHint._t = setTimeout(() => { hint.style.opacity = "0"; }, 3500);
   }
 
-  // Mobile drawer toggle: collapse/expand the side pane. Only meaningful in
-  // the mobile layout (< 900px); on desktop the toggle is display:none.
-  const toggle = document.getElementById("drawer-toggle");
+  // Mobile drawer tabs (Tape / History) double as the expand/collapse control:
+  // the tab strip is always visible; tapping a tab opens the drawer to that
+  // panel, tapping the active tab again collapses it. Only meaningful in the
+  // mobile layout (< 900px); on desktop the strip is display:none and all
+  // panels stack. The CSS uses .side-pane[data-tab="…"] to pick the panel and
+  // [data-collapsed] for the height.
   const pane = document.getElementById("side-pane");
-  if (toggle && pane) {
+  const tabs = document.querySelectorAll("#drawer-tabs button[data-tab]");
+  if (tabs.length && pane) {
+    // Remember the user's dragged height; reapply on expand. Collapse clears the
+    // inline height so the CSS collapsed-height (40px) wins.
+    let drawerHeight = "";
     const setCollapsed = (v) => {
       pane.dataset.collapsed = v ? "true" : "false";
-      toggle.setAttribute("aria-expanded", v ? "false" : "true");
+      pane.style.height = v ? "" : drawerHeight;
+    };
+    const selectTab = (name) => {
+      pane.dataset.tab = name;
+      tabs.forEach((t) => {
+        const on = t.dataset.tab === name;
+        t.classList.toggle("active", on);
+        t.setAttribute("aria-selected", on ? "true" : "false");
+      });
     };
     // Start collapsed so the chart owns the whole viewport on first paint.
     setCollapsed(true);
-    toggle.addEventListener("click", () => {
-      setCollapsed(pane.dataset.collapsed !== "true" ? true : false);
-    });
-  }
-
-  // Mobile drawer tabs: Trade / Tape / History. Only one panel shows at a
-  // time so each gets the full drawer body. The CSS uses
-  // .side-pane[data-tab="…"] to pick which child to render.
-  const tabs = document.querySelectorAll("#drawer-tabs button[data-tab]");
-  if (tabs.length && pane) {
     tabs.forEach((btn) => {
       btn.addEventListener("click", () => {
-        pane.dataset.tab = btn.dataset.tab;
-        tabs.forEach((t) => {
-          const on = t === btn;
-          t.classList.toggle("active", on);
-          t.setAttribute("aria-selected", on ? "true" : "false");
-        });
+        const collapsed = pane.dataset.collapsed === "true";
+        if (collapsed) {                       // closed → open to this tab
+          selectTab(btn.dataset.tab);
+          setCollapsed(false);
+        } else if (pane.dataset.tab === btn.dataset.tab) {
+          setCollapsed(true);                  // tapping the open tab → collapse
+        } else {
+          selectTab(btn.dataset.tab);          // switch tab, stay open
+        }
       });
     });
+
+    // Drag the top edge of the drawer to resize it (mobile). Mirrors the
+    // RSI/CVD pane-resize handles: pointer events so touch works.
+    const handle = document.getElementById("drawer-resize");
+    if (handle) {
+      handle.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+        const startY = e.clientY;
+        const startH = pane.getBoundingClientRect().height;
+        if (pane.dataset.collapsed === "true") setCollapsed(false);   // dragging expands
+        const onMove = (ev) => {
+          const dy = startY - ev.clientY;        // drag up = taller
+          const h = Math.max(40, Math.min(window.innerHeight * 0.85, startH + dy));
+          drawerHeight = h + "px";
+          pane.style.height = drawerHeight;
+        };
+        const onUp = () => {
+          handle.removeEventListener("pointermove", onMove);
+          handle.removeEventListener("pointerup", onUp);
+          handle.removeEventListener("pointercancel", onUp);
+        };
+        handle.addEventListener("pointermove", onMove);
+        handle.addEventListener("pointerup", onUp);
+        handle.addEventListener("pointercancel", onUp);
+      });
+    }
   }
 
   // Mobile collapsible rows — Tools (chart-toolbar) and Indicators. Tapping

@@ -404,6 +404,37 @@ async def close_trade(
     return _serialize_session(sess)
 
 
+class ModifyTradeReq(BaseModel):
+    # only non-null fields are applied, so the client can patch one level at a
+    # time (e.g. a single dragged SL line) without echoing the whole trade.
+    # clear_sl / clear_tp remove that level (None can't express "clear").
+    sl: float | None = None
+    tp: float | None = None
+    limit_price: float | None = None
+    qty: float | None = None
+    clear_sl: bool = False
+    clear_tp: bool = False
+
+
+@app.post("/api/session/{sid}/trade/{tid}/modify")
+async def modify_trade(
+    sid: str, tid: str, req: ModifyTradeReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    sess = await _resolve(db, sid, user.id)
+    with sess.lock:
+        try:
+            sess.modify_trade(tid, sl=req.sl, tp=req.tp,
+                              limit_price=req.limit_price, qty=req.qty,
+                              clear_sl=req.clear_sl, clear_tp=req.clear_tp)
+        except KeyError:
+            raise HTTPException(404, "trade not found or already closed")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    await save_snapshot(db, sess)
+    return _serialize_session(sess)
+
+
 @app.get("/api/session/{sid}/footprint")
 async def footprint(
     sid: str, from_ts: int, to_ts: int, levels: int = 10,
