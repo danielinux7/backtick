@@ -1324,7 +1324,6 @@
     const atEnd = session.cursor >= session.total - 1;
     // in live mode there's always a current price (from WS), so trading stays enabled
     const tradingDisabled = !session.is_live && atEnd;
-    $("#cursor-info").textContent = `${session.symbol} ${session.tf}  ${session.cursor + 1} / ${session.total}  @ ${tzYmdHm(session.current_time)}  price ${session.current_price.toFixed(4)}`;
     $("#mark-info").textContent = `Mark: ${session.current_price.toFixed(4)}`;
     $("#back-1").disabled = session.cursor <= 0;
     $("#next-1").disabled = atEnd;
@@ -1536,8 +1535,6 @@
     candleSeries.update(candle);
     session.current_time = candle.time;
     session.current_price = candle.close;
-    $("#cursor-info").textContent =
-      `${session.symbol} ${session.tf}  LIVE  @ ${tzYmdHm(candle.time)}  price ${candle.close.toFixed(4)}`;
     $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
     // refresh open-position P&L against the new live price
     if (session.trades.some((t) => t.status === "open")) renderTrades();

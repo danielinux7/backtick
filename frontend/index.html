@@ -149,37 +149,48 @@
             </div>
           </div>
         </div>
-      </div>
-      <div class="controls">
-        <div class="controls-left">
-          <div class="mode-pill" id="speed-mode" role="tablist" aria-label="Replay mode">
-            <button type="button" data-mode="tick" class="active" role="tab" aria-selected="true">Tick</button>
-            <button type="button" data-mode="candle" role="tab" aria-selected="false">Candle</button>
+
+        <div class="controls">
+          <div class="controls-left">
+            <div class="mode-pill" id="speed-mode" role="tablist" aria-label="Replay mode">
+              <button type="button" data-mode="tick" class="active" role="tab" aria-selected="true" title="Tick replay" aria-label="Tick replay">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="2 12 6 12 9 5 13 19 16 12 22 12"/>
+                </svg>
+              </button>
+              <button type="button" data-mode="candle" role="tab" aria-selected="false" title="Candle replay" aria-label="Candle replay">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <line x1="8" y1="3" x2="8" y2="7"/>
+                  <rect x="5.5" y="7" width="5" height="8" rx="1"/>
+                  <line x1="8" y1="15" x2="8" y2="21"/>
+                  <line x1="16" y1="4" x2="16" y2="9"/>
+                  <rect x="13.5" y="9" width="5" height="6" rx="1"/>
+                  <line x1="16" y1="15" x2="16" y2="20"/>
+                </svg>
+              </button>
+            </div>
+            <label>Speed <select id="speed"></select></label>
           </div>
-          <label>Speed <select id="speed"></select></label>
-        </div>
-        <div class="controls-center">
-          <button id="back-1" class="icon-btn" disabled title="Previous (←)" aria-label="Previous">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-              <path d="M7 5h2v14H7zM20 5L9 12l11 7z"/>
-            </svg>
-          </button>
-          <button id="play" class="icon-btn" disabled title="Play / Pause (Space)" aria-label="Play">
-            <svg class="play-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-              <path d="M7 5l12 7-12 7z"/>
-            </svg>
-            <svg class="pause-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" hidden>
-              <path d="M6 5h4v14H6zM14 5h4v14h-4z"/>
-            </svg>
-          </button>
-          <button id="next-1" class="icon-btn" disabled title="Next (→)" aria-label="Next">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
-              <path d="M15 5h2v14h-2zM4 5l11 7-11 7z"/>
-            </svg>
-          </button>
-        </div>
-        <div class="controls-right">
-          <span id="cursor-info"></span>
+          <div class="controls-center">
+            <button id="back-1" class="icon-btn" disabled title="Previous (←)" aria-label="Previous">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                <path d="M7 5h2v14H7zM20 5L9 12l11 7z"/>
+              </svg>
+            </button>
+            <button id="play" class="icon-btn" disabled title="Play / Pause (Space)" aria-label="Play">
+              <svg class="play-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                <path d="M7 5l12 7-12 7z"/>
+              </svg>
+              <svg class="pause-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true" hidden>
+                <path d="M6 5h4v14H6zM14 5h4v14h-4z"/>
+              </svg>
+            </button>
+            <button id="next-1" class="icon-btn" disabled title="Next (→)" aria-label="Next">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" aria-hidden="true">
+                <path d="M15 5h2v14h-2zM4 5l11 7-11 7z"/>
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </section>

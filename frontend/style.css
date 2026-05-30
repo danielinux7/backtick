@@ -322,14 +322,18 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
      into rows — primary step buttons first as full-width touch targets.
      Scoped under `.chart-pane` so these win over the base `.controls` grid
      rule, which is defined later in the file (media queries add no specificity). */
-  .chart-pane .controls { display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+  /* On phones the controls return to a normal in-flow bar at the bottom of the
+     chart stack (no floating overlay / pills), stacked into rows. */
+  .chart-pane .controls { position: static; pointer-events: auto;
+    display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+    padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; }
+  .chart-pane .controls-left, .chart-pane .controls-center {
+    background: none; border: 0; padding: 0; backdrop-filter: none; }
   .chart-pane .controls-center { order: -1; }
   .chart-pane .controls-center button { flex: 1; }
   .chart-pane .controls-left { justify-content: space-between; }
   .chart-pane .controls-left label { flex: 1; }
   .chart-pane .controls-left select, .chart-pane .controls-left input { flex: 1; min-width: 0; }
-  .chart-pane .controls-right { justify-content: flex-start; }
-  .chart-pane #cursor-info { white-space: normal; font-size: 11px; }
 
   /* Keep trade-form labels (e.g. "Side for picks") on one line; let the
      adjacent control flex into the remaining width instead of forcing the
@@ -435,20 +439,29 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .pane-resize:hover { background: #2962ff; }
 .pane-resize.hidden { display: none; }
 
-.controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; flex-shrink: 0; }
-.controls-left { display: flex; gap: 8px; align-items: center; justify-self: start; }
-.controls-center { display: flex; gap: 8px; align-items: center; justify-self: center; }
-.controls-right { display: flex; gap: 8px; align-items: center; justify-self: stretch; justify-content: flex-end; min-width: 0; overflow: hidden; }
+/* Floating replay controls overlaid on the bottom of the chart — a centered
+   pill cluster (mode/speed + transport) with the cursor readout tucked into the
+   bottom-left. The container is click-through; only the pills capture pointer
+   events, so the chart stays draggable in the gaps around them. */
+.controls { position: absolute; left: 0; right: 0; bottom: 40px; z-index: 40;
+  display: flex; justify-content: center; align-items: flex-end; gap: 8px;
+  padding: 0 14px; pointer-events: none; }
+.controls-left, .controls-center { display: flex; gap: 8px; align-items: center;
+  pointer-events: auto; background: rgba(22, 26, 34, 0.82);
+  border: 1px solid #2a2e39; border-radius: 8px; padding: 4px 8px;
+  backdrop-filter: blur(2px); }
+.controls-left label { display: flex; align-items: center; gap: 4px;
+  font-size: 12px; color: #b0b6c0; }
 .controls button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
 .controls-center button { min-width: 64px; }
 .controls button:hover:not(:disabled) { background: #2a2e39; }
 .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 .controls input, .controls select { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 2px 6px; }
-#cursor-info { font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; pointer-events: none; }
 
 /* Tick/Candle segmented toggle in the replay controls */
 .mode-pill { display: inline-flex; background: #1e222d; border: 1px solid #2a2e39; border-radius: 6px; padding: 2px; gap: 2px; }
-.mode-pill button { background: transparent; color: #8a93a3; border: 0; border-radius: 4px; padding: 3px 12px; font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4; }
+.mode-pill button { display: inline-flex; align-items: center; background: transparent; color: #8a93a3; border: 0; border-radius: 4px; padding: 4px 9px; font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4; }
+.mode-pill button svg { display: block; }
 .mode-pill button:hover { color: #d1d4dc; }
 .mode-pill button.active { background: #ffb74d; color: #1e222d; font-weight: 600; }
 
