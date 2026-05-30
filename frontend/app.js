@@ -1623,6 +1623,7 @@
         method: "POST", body: JSON.stringify(body), signal,
       });
       applySession(data, true);
+      clearFieldError(setupForm.symbol);   // a prior "unknown symbol" cleared on success
       if (data.is_live) {
         connectLiveStream(data);
         setStatus(`live · ${data.total} warmup candles`);
@@ -1632,9 +1633,13 @@
     } catch (err) {
       if (err.name === "AbortError") return;
       const msg = err.message;
-      if (/symbol|invalid symbol/i.test(msg)) showFieldError(setupForm.symbol, "unknown symbol");
+      // Only a genuine bad symbol → field error. Transient fetch failures
+      // (rate limit, network, blocked IP) carry the klines URL with "symbol="
+      // in it, so match the explicit phrases — not a bare "symbol" — to avoid
+      // mislabeling an outage as "unknown symbol".
+      if (/unknown symbol|invalid symbol/i.test(msg)) showFieldError(setupForm.symbol, "unknown symbol");
       else if (/no candles|no recent candles/i.test(msg)) showFieldError(setupForm.symbol, "no data");
-      else setStatus(msg, true);
+      else setStatus(`couldn't load data: ${msg}`, true);
     }
   };
 

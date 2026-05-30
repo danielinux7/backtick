@@ -13,6 +13,13 @@ import pandas as pd
 SPOT_BASE = "https://api.binance.com"
 FUTURES_BASE = "https://fapi.binance.com"
 
+
+class UnknownSymbolError(ValueError):
+    """Binance rejected the symbol itself (HTTP 400 / code -1121), as opposed to
+    a transient fetch failure (rate limit, network, blocked IP). Subclasses
+    ValueError so callers map it to a 400 ("unknown symbol"), distinct from the
+    502 ("data fetch failed") used for everything else."""
+
 _DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data_cache"
 CACHE_DIR = Path(os.environ.get("DATA_CACHE_DIR", str(_DEFAULT_CACHE)))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,6 +54,12 @@ def _fetch_chunk(client: httpx.Client, market: str, symbol: str, tf: str,
     params = {"symbol": symbol, "interval": tf, "startTime": start_ms,
               "endTime": end_ms, "limit": 1000}
     r = client.get(_endpoint(market), params=params, timeout=30.0)
+    # A 400 here means Binance rejected the request itself — for klines the only
+    # request-level cause is an unknown/invalid symbol. Surface that as a clean
+    # UnknownSymbolError so the API returns 400 "unknown symbol" rather than a
+    # generic 502 whose URL (…symbol=XYZ…) gets mislabeled downstream.
+    if r.status_code == 400:
+        raise UnknownSymbolError(f"unknown symbol: {symbol}")
     r.raise_for_status()
     return r.json()
 
