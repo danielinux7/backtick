@@ -17,6 +17,8 @@ from zipfile import ZipFile
 import httpx
 import pandas as pd
 
+from .binance import note_rate_limited, rate_limit_guard
+
 ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_CACHE = ROOT / "data_cache"
 _CACHE_ROOT = Path(os.environ.get("DATA_CACHE_DIR", str(_DEFAULT_CACHE)))
@@ -97,9 +99,12 @@ def fetch_rest_recent(symbol: str, market: str, limit: int = 1000) -> pd.DataFra
     base = "https://fapi.binance.com" if market == "futures" else "https://api.binance.com"
     path = "/fapi/v1/aggTrades" if market == "futures" else "/api/v3/aggTrades"
     limit = max(1, min(limit, 1000))
+    rate_limit_guard()
     with httpx.Client(timeout=15) as client:
         r = client.get(f"{base}{path}",
                        params={"symbol": symbol.upper(), "limit": limit})
+        if r.status_code in (418, 429):
+            raise note_rate_limited(r)
         r.raise_for_status()
         rows = r.json()
     if not rows:
@@ -123,6 +128,7 @@ def _fetch_rest_range(symbol: str, market: str, start_ms: int, end_ms: int) -> p
     path = "/fapi/v1/aggTrades" if market == "futures" else "/api/v3/aggTrades"
     rows: list[dict] = []
     cur = start_ms
+    rate_limit_guard()          # bail fast if we're already in a cooldown
     with httpx.Client(timeout=30) as client:
         while cur < end_ms:
             try:
@@ -132,9 +138,13 @@ def _fetch_rest_range(symbol: str, market: str, start_ms: int, end_ms: int) -> p
                     "endTime": min(end_ms, cur + 3_600_000),
                     "limit": 1000,
                 })
+                if r.status_code in (418, 429):
+                    note_rate_limited(r)   # record cooldown, then return partial
+                    break
                 r.raise_for_status()
             except httpx.HTTPStatusError as e:
-                if e.response.status_code == 429:
+                if e.response.status_code in (418, 429):
+                    note_rate_limited(e.response)
                     break       # rate limited — stop fetching, return partial
                 raise
             batch = r.json()

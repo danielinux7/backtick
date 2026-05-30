@@ -5,14 +5,17 @@ Pure function, no network. tf_ms = 60_000 (1m) throughout; timestamps are ms.
 import numpy as np
 import pytest
 
-from backend.binance import UnknownSymbolError, _fetch_chunk, _missing_ranges
+import backend.binance as binance
+from backend.binance import (
+    RateLimitedError, UnknownSymbolError, _fetch_chunk, _missing_ranges)
 
 TF = 60_000
 
 
 class _FakeResp:
-    def __init__(self, status_code):
+    def __init__(self, status_code, headers=None):
         self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -23,11 +26,19 @@ class _FakeResp:
 
 
 class _FakeClient:
-    def __init__(self, status_code):
+    def __init__(self, status_code, headers=None):
         self._status = status_code
+        self._headers = headers
 
     def get(self, *_a, **_k):
-        return _FakeResp(self._status)
+        return _FakeResp(self._status, self._headers)
+
+
+@pytest.fixture(autouse=True)
+def _reset_cooldown():
+    binance._blocked_until = 0.0
+    yield
+    binance._blocked_until = 0.0
 
 
 def test_fetch_chunk_400_is_unknown_symbol():
@@ -38,11 +49,25 @@ def test_fetch_chunk_400_is_unknown_symbol():
         _fetch_chunk(_FakeClient(400), "spot", "ZZZZUSDT", "4h", 0, TF)
 
 
-def test_fetch_chunk_other_error_is_not_unknown_symbol():
-    # A transient failure (e.g. 429/5xx) must NOT be treated as a bad symbol.
-    with pytest.raises(Exception) as ei:
-        _fetch_chunk(_FakeClient(429), "spot", "BTCUSDT", "4h", 0, TF)
+def test_fetch_chunk_429_is_rate_limited():
+    # 429/418 are rate limiting, not a bad symbol — raise RateLimitedError and
+    # honor Retry-After.
+    with pytest.raises(RateLimitedError) as ei:
+        _fetch_chunk(_FakeClient(429, {"Retry-After": "120"}),
+                     "spot", "BTCUSDT", "4h", 0, TF)
     assert not isinstance(ei.value, UnknownSymbolError)
+    assert ei.value.retry_after == 120
+
+
+def test_rate_limit_guard_short_circuits_during_cooldown():
+    # After a 418, the process-wide cooldown makes the next fetch fail fast
+    # (no network) so we don't deepen the ban.
+    with pytest.raises(RateLimitedError):
+        _fetch_chunk(_FakeClient(418, {"Retry-After": "60"}),
+                     "spot", "BTCUSDT", "4h", 0, TF)
+    # a "live" client that would 200 must still be blocked by the guard
+    with pytest.raises(RateLimitedError):
+        _fetch_chunk(_FakeClient(200), "spot", "BTCUSDT", "4h", 0, TF)
 
 
 def _ms(*minutes):

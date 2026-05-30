@@ -20,6 +20,50 @@ class UnknownSymbolError(ValueError):
     ValueError so callers map it to a 400 ("unknown symbol"), distinct from the
     502 ("data fetch failed") used for everything else."""
 
+
+class RateLimitedError(RuntimeError):
+    """Binance returned 429 (rate limit) or 418 (IP auto-ban for continuing to
+    request after a 429). Carries retry_after seconds. We also remember a
+    process-wide cooldown (see rate_limit_guard) and short-circuit further
+    fetches until it lapses — hammering Binance during a ban only extends it."""
+    def __init__(self, retry_after: int):
+        self.retry_after = max(1, int(retry_after))
+        super().__init__(
+            f"Binance rate-limited this IP — wait ~{self.retry_after}s and retry")
+
+
+# Process-wide cooldown set when Binance returns 418/429. While now < this,
+# fetches raise RateLimitedError immediately instead of hitting the network.
+_blocked_until = 0.0
+
+
+def _retry_after_seconds(resp) -> int:
+    """Seconds to back off, from the Retry-After header if present (Binance often
+    omits it on 429 but sets it on 418), else a conservative default."""
+    try:
+        ra = int(getattr(resp, "headers", {}).get("Retry-After", ""))
+        if ra > 0:
+            return ra
+    except (TypeError, ValueError):
+        pass
+    return 60
+
+
+def rate_limit_guard() -> None:
+    """Raise RateLimitedError if we're still inside a known Binance cooldown,
+    without touching the network. Call before any Binance REST request."""
+    remaining = _blocked_until - time.time()
+    if remaining > 0:
+        raise RateLimitedError(int(remaining) + 1)
+
+
+def note_rate_limited(resp) -> RateLimitedError:
+    """Record a cooldown from a 418/429 response; returns the error to raise."""
+    global _blocked_until
+    secs = _retry_after_seconds(resp)
+    _blocked_until = max(_blocked_until, time.time() + secs)
+    return RateLimitedError(secs)
+
 _DEFAULT_CACHE = Path(__file__).resolve().parent.parent / "data_cache"
 CACHE_DIR = Path(os.environ.get("DATA_CACHE_DIR", str(_DEFAULT_CACHE)))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -51,9 +95,12 @@ def _endpoint(market: str) -> str:
 
 def _fetch_chunk(client: httpx.Client, market: str, symbol: str, tf: str,
                  start_ms: int, end_ms: int) -> list[list]:
+    rate_limit_guard()
     params = {"symbol": symbol, "interval": tf, "startTime": start_ms,
               "endTime": end_ms, "limit": 1000}
     r = client.get(_endpoint(market), params=params, timeout=30.0)
+    if r.status_code in (418, 429):
+        raise note_rate_limited(r)
     # A 400 here means Binance rejected the request itself — for klines the only
     # request-level cause is an unknown/invalid symbol. Surface that as a clean
     # UnknownSymbolError so the API returns 400 "unknown symbol" rather than a

@@ -1637,7 +1637,8 @@
       // (rate limit, network, blocked IP) carry the klines URL with "symbol="
       // in it, so match the explicit phrases — not a bare "symbol" — to avoid
       // mislabeling an outage as "unknown symbol".
-      if (/unknown symbol|invalid symbol/i.test(msg)) showFieldError(setupForm.symbol, "unknown symbol");
+      if (/rate.?limit|\b418\b|\b429\b|teapot/i.test(msg)) setStatus(msg, true);
+      else if (/unknown symbol|invalid symbol/i.test(msg)) showFieldError(setupForm.symbol, "unknown symbol");
       else if (/no candles|no recent candles/i.test(msg)) showFieldError(setupForm.symbol, "no data");
       else setStatus(`couldn't load data: ${msg}`, true);
     }
