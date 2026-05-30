@@ -266,8 +266,8 @@
     <div class="mtb-toggles">
       <button type="button" id="m-use-sl" class="mtb-chip" aria-pressed="false">SL</button>
       <input type="number" id="m-sl-pct" class="mtb-pct" step="0.01" min="0" placeholder="%" inputmode="decimal" />
-      <button type="button" id="m-use-tp" class="mtb-chip" aria-pressed="false">TP</button>
       <input type="number" id="m-tp-pct" class="mtb-pct" step="0.01" min="0" placeholder="%" inputmode="decimal" />
+      <button type="button" id="m-use-tp" class="mtb-chip" aria-pressed="false">TP</button>
     </div>
     <div class="mtb-main">
       <button type="button" id="m-sell" class="mtb-side mtb-sell">
@@ -284,7 +284,7 @@
       <button type="button" id="m-buy" class="mtb-side mtb-buy">
         <span class="mtb-text">
           <span class="mtb-label">Buy</span>
-          <span class="mtb-quote"><span class="mtb-arrow">&#8595;</span><span class="mtb-price" id="m-buy-price">—</span></span>
+          <span class="mtb-quote"><span class="mtb-arrow">&#8593;</span><span class="mtb-price" id="m-buy-price">—</span></span>
         </span>
         <span class="mtb-grip" aria-hidden="true"></span>
       </button>
@@ -333,7 +333,11 @@
 
   <script src="/static/app.js"></script>
   <script src="/static/symbol-picker.js"></script>
+  <script src="/static/dropdown.js"></script>
   <script src="/static/auth-modal.js"></script>
   <script src="/static/pwa.js"></script>
+  <!-- Cloudflare Web Analytics — privacy-first, cookieless. -->
+  <script defer src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon='{"token":"56ba377872df41f3aca3e66522a8c25a"}'></script>
 </body>
 </html>

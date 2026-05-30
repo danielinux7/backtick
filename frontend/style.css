@@ -177,6 +177,37 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .symbol-row .symbol-del:hover { background: #ef5350; color: #fff; border-color: #ef5350; }
 .symbol-row .symbol-add:disabled { opacity: 0.6; cursor: default; }
 .symbol-empty { font-size: 11px; padding: 6px 8px; color: #8a93a3; }
+/* Custom dropdowns (mode / market / timeframe). The native <select> stays in the
+   DOM (hidden) as the source of truth for FormData + change listeners; this is the
+   styled overlay that replaces the browser's "crude" native option list. */
+.dd { position: relative; display: inline-flex; }
+.dd .dd-native { display: none; }
+.dd .dd-trigger {
+  display: inline-flex; align-items: center; gap: 6px; width: 100%;
+  background: #1e222d; color: #d1d4dc;
+  border: 1px solid #2a2e39; border-radius: 4px;
+  padding: 4px 8px; font: inherit; font-size: inherit; cursor: pointer;
+  white-space: nowrap;
+}
+.dd .dd-trigger:hover { background: #1e222d; border-color: #3a4150; }
+.dd .dd-trigger .dd-label { flex: 1; text-align: left; }
+.dd .dd-trigger .dd-caret { color: #8a93a3; font-size: 11px; line-height: 1; }
+.dd .dd-popover {
+  position: absolute; top: calc(100% + 4px); left: 0;
+  min-width: 100%; max-height: 360px; overflow: auto;
+  background: #1e222d; color: #d1d4dc;
+  border: 1px solid #2a2e39; border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  z-index: 200; padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+.dd .dd-popover[hidden] { display: none; }
+.dd .dd-row {
+  text-align: left; background: transparent; color: #d1d4dc;
+  border: 1px solid transparent; border-radius: 4px;
+  padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.dd .dd-row:hover { background: #2a2e39; border-color: #2a2e39; }
+.dd .dd-row.active { color: #26a69a; }
 .live-indicator { font-size: 11px; font-weight: 700; color: #81c784; letter-spacing: 0.5px;
   display: inline-flex; align-items: center; gap: 4px;
   animation: live-pulse 1.5s ease-in-out infinite; }
@@ -234,6 +265,11 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   #status    { order: 3; }
   .setup select, .setup input, .setup button { font-size: 11px; padding: 5px 4px; min-height: 34px; }
   .symbol-popover { width: min(92vw, 360px); max-height: 50vh; }
+  /* Dropdowns share the single setup strip and need finger-sized hit targets. */
+  .setup > .dd { flex: 1 1 0; min-width: 0; }
+  .dd .dd-trigger { justify-content: space-between; font-size: 11px; padding: 5px 4px; min-height: 34px; }
+  .dd .dd-popover { width: max(100%, 116px); max-height: 50vh; }
+  .dd .dd-row { padding: 10px 12px; font-size: 13px; }
 
   .side-pane {
     border-top: 1px solid #1e222d;
@@ -245,7 +281,11 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     flex-shrink: 0;
     padding-bottom: max(0px, env(safe-area-inset-bottom));
   }
-  .side-pane[data-collapsed="true"] { height: 40px; overflow: hidden; }
+  .side-pane[data-collapsed="true"] { height: 30px; overflow: hidden; }
+  /* Collapsed: the resize handle is hidden, so the tab strip must NOT keep its
+     `top: 24px` sticky offset (that pushed the row down and clipped the labels
+     against the 32px overflow:hidden boundary). Pin it to the top instead. */
+  .side-pane[data-collapsed="true"] .drawer-tabs { top: 0; }
   /* Tab strip doubles as the expand/collapse control: it's always visible (even
      when collapsed) so the chart keeps maximum height until a tab is tapped. */
   .drawer-tabs {
@@ -257,9 +297,9 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .drawer-tabs button {
     flex: 1; background: transparent; color: #8a93a3;
     border: 0; border-bottom: 2px solid transparent;
-    padding: 8px 4px; font: inherit; font-size: 12px;
+    padding: 4px 4px; font: inherit; font-size: 12px;
     font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
-    cursor: pointer; min-height: 40px;
+    cursor: pointer; min-height: 28px;
   }
   .drawer-tabs button.active { color: #26a69a; border-bottom-color: #26a69a; }
   /* While collapsed no tab is "current" — the highlight only appears once a tab
@@ -269,17 +309,17 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   }
   /* Draggable top edge of the drawer (hidden when collapsed). */
   .side-pane > .drawer-resize {
-    display: block; height: 14px; flex-shrink: 0; cursor: ns-resize;
+    display: block; height: 24px; flex-shrink: 0; cursor: ns-resize;
     touch-action: none; background: #0f1218;
     position: sticky; top: 0; z-index: 7;
   }
   .drawer-resize::before {
     content: ""; position: absolute; left: 50%; top: 50%;
     transform: translate(-50%, -50%);
-    width: 36px; height: 4px; border-radius: 2px; background: #3a4150;
+    width: 44px; height: 5px; border-radius: 3px; background: #3a4150;
   }
   .side-pane[data-collapsed="true"] .drawer-resize { display: none; }
-  .side-pane .drawer-tabs { top: 14px; }      /* sit below the resize handle */
+  .side-pane .drawer-tabs { top: 24px; }      /* sit below the resize handle */
   /* Mobile order entry lives in the fixed bottom bar, so the form panel is
      hidden here; the drawer holds only Tape + History. */
   .side-pane > .trade-panel { display: none; }
@@ -347,7 +387,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   box-sizing: border-box; flex: 0 0 auto;
   width: 30px; height: 30px; padding: 0;
   background: rgba(22, 26, 34, 0.82); color: #b0b6c0;
-  border: 1px solid #2a2e39; border-radius: 6px;
+  border: 1px solid #2a2e39; border-radius: 0;
   cursor: pointer; backdrop-filter: blur(2px);
   transition: color 0.1s, background 0.1s, border-color 0.1s;
 }
@@ -597,7 +637,10 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 /* ---------- Mobile fixed order bar (Sell | Lots | Buy) ---------- */
 #mobile-trade-bar { display: none; }
 @media (max-width: 900px) {
-  :root { --mbar-h: 96px; }
+  /* Reserve exactly the trade bar's real height (toggles 22 + gap 4 + main 50 +
+     4px top/bottom padding + 1px border ≈ 85px). Over-reserving (was 96px) left a
+     dead strip of body background between the collapsed drawer and the bar. */
+  :root { --mbar-h: 85px; }
   #mobile-trade-bar {
     display: flex; flex-direction: column; gap: 4px;
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
