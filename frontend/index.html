@@ -211,31 +211,25 @@
               <option value="limit">Limit</option>
             </select>
           </label>
-          <label id="limit-row" style="display:none">Price
-            <input type="number" id="t-limit" step="any" placeholder="limit price" />
-          </label>
-          <button type="button" class="pick" data-pick="limit" id="pick-limit" style="display:none" title="set from chart">&#127919;</button>
-        </div>
-        <div class="row">
           <label>Qty <input type="number" id="t-qty" value="1" step="any" min="0" /></label>
         </div>
-        <div class="row sltp-row">
-          <label class="toggle-label" for="use-sl"><input type="checkbox" id="use-sl" /> SL %</label>
-          <input type="number" id="t-sl-pct" step="0.01" placeholder="off" disabled />
-          <button type="button" class="pick" data-pick="sl" title="set SL from chart">&#127919;</button>
-        </div>
-        <div class="row sltp-row">
-          <label class="toggle-label" for="use-tp"><input type="checkbox" id="use-tp" /> TP %</label>
-          <input type="number" id="t-tp-pct" step="0.01" placeholder="off" disabled />
-          <button type="button" class="pick" data-pick="tp" title="set TP from chart">&#127919;</button>
-        </div>
-        <div class="row">
-          <label>Side for picks
-            <select id="pick-side">
-              <option value="long">Long</option>
-              <option value="short">Short</option>
-            </select>
+        <div class="row" id="limit-row" style="display:none">
+          <label>Price
+            <input type="number" id="t-limit" step="any" placeholder="limit price" />
           </label>
+          <button type="button" class="pick" data-pick="limit" id="pick-limit" title="set from chart">&#127919;</button>
+        </div>
+        <div class="row sltp-pair">
+          <div class="sltp-group">
+            <label class="toggle-label" for="use-sl"><input type="checkbox" id="use-sl" /> SL %</label>
+            <input type="number" id="t-sl-pct" step="0.01" placeholder="off" disabled />
+            <button type="button" class="pick" data-pick="sl" title="set SL from chart">&#127919;</button>
+          </div>
+          <div class="sltp-group">
+            <label class="toggle-label" for="use-tp"><input type="checkbox" id="use-tp" /> TP %</label>
+            <input type="number" id="t-tp-pct" step="0.01" placeholder="off" disabled />
+            <button type="button" class="pick" data-pick="tp" title="set TP from chart">&#127919;</button>
+          </div>
         </div>
         <div class="row buttons">
           <button id="long-btn" class="long" disabled>Long</button>

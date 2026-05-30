@@ -2246,24 +2246,12 @@
       setStatus(`limit set to ${$("#t-limit").value}`);
       disarm();
     } else if (armedFor === "sl" || armedFor === "tp") {
-      const side = $("#pick-side").value;
       const ref = refPriceForPicks();
       if (ref == null) { disarm(); return; }
       const targetInput = armedFor === "sl" ? $("#t-sl-pct") : $("#t-tp-pct");
       const useBox = armedFor === "sl" ? $("#use-sl") : $("#use-tp");
-      if (armedFor === "sl") {
-        const ok = side === "long" ? price < ref : price > ref;
-        if (!ok) {
-          showFieldError(targetInput, side === "long" ? "SL must be below entry" : "SL must be above entry");
-          disarm(); return;
-        }
-      } else {
-        const ok = side === "long" ? price > ref : price < ref;
-        if (!ok) {
-          showFieldError(targetInput, side === "long" ? "TP must be above entry" : "TP must be below entry");
-          disarm(); return;
-        }
-      }
+      // store the distance as a percentage; the Long/Short button applies it in
+      // the correct direction at placement (no need for an explicit pick side).
       const pct = Math.abs((price - ref) / ref) * 100;
       useBox.checked = true;
       targetInput.disabled = false;
@@ -2396,7 +2384,6 @@
   $("#t-type").addEventListener("change", (e) => {
     const isLimit = e.target.value === "limit";
     $("#limit-row").style.display = isLimit ? "" : "none";
-    $("#pick-limit").style.display = isLimit ? "" : "none";
     if (!isLimit) $("#t-limit").value = "";
     if (!isLimit && armedFor === "limit") disarm();
   });

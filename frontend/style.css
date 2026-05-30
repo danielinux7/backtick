@@ -499,6 +499,12 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .row label.toggle-label { gap: 6px; flex: 0 0 70px; cursor: pointer; white-space: nowrap; }
 .row label.toggle-label input[type=checkbox] { width: auto; flex: none; margin: 0; }
 .row.sltp-row > input[type=number] { flex: 1 1 auto; min-width: 0; width: auto; }
+/* SL + TP sharing one row: two equal groups, each [check · input · 🎯] */
+.row.sltp-pair { gap: 8px; }
+.sltp-group { flex: 1 1 0; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sltp-group label.toggle-label { flex: 0 0 auto; }
+.sltp-group input[type=number] { flex: 1 1 auto; min-width: 0; width: auto; }
+.sltp-group .pick { flex: 0 0 auto; }
 .row input, .row select { width: 100%; background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 6px; }
 .row input:disabled { opacity: 0.4; }
 .row input.bad, .row select.bad { border-color: #ef5350; }
