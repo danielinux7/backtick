@@ -183,9 +183,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 @keyframes live-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.55 } }
 /* hide replay-only controls in live mode */
 .live-mode .controls,
-.live-mode #replay-date,
-.live-mode input[name=warmup],
-.live-mode .setup button[type=submit] { display: none !important; }
+.live-mode #replay-date { display: none !important; }
 
 main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
 .drawer-toggle { display: none; background: none; border: 0; color: inherit; font: inherit; }
@@ -342,29 +340,86 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 }
 
 .chart-pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
-.chart-toolbar { display: flex; gap: 6px; padding: 4px 8px; background: #0f1218; border-bottom: 1px solid #1e222d; align-items: center; flex-shrink: 0; font-size: 12px; }
-.chart-toolbar button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
-.chart-toolbar button:hover:not(:disabled) { background: #2a2e39; }
-.chart-toolbar button.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
-.chart-toolbar input[type=color] { width: 24px; height: 22px; padding: 0; border: 1px solid #2a2e39; border-radius: 4px; background: #1e222d; cursor: pointer; }
-.chart-toolbar input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; }
-.chart-toolbar input[type=color]::-webkit-color-swatch { border: none; border-radius: 2px; }
 
-.hlines-strip { display: flex; gap: 4px; padding: 4px 8px; background: #0f1218; border-bottom: 1px solid #1e222d; flex-wrap: wrap; font-size: 11px; }
-.hlines-strip:empty { display: none; }
-.hline-chip { display: inline-flex; align-items: center; gap: 4px; background: #1e222d; border: 1px solid #2a2e39; border-radius: 4px; padding: 1px 4px 1px 2px; font-family: monospace; }
-.hline-chip input[type=color] { width: 18px; height: 16px; padding: 0; border: none; background: transparent; cursor: pointer; }
-.hline-chip input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
-.hline-chip input[type=color]::-webkit-color-swatch { border: none; border-radius: 2px; }
-.hline-chip .px { color: #d1d4dc; }
-.hline-chip button { background: transparent; color: #888; border: none; cursor: pointer; padding: 0 2px; font-size: 14px; line-height: 1; }
-.hline-chip button:hover { color: #ef5350; }
-#measure-summary { margin-left: auto; color: #ddd; font-family: monospace; font-size: 12px; }
-#measure-summary b { color: #ffb74d; }
+/* ---------- Chart overlay launchers (Tools + Indicators) ----------
+   Two icon buttons anchored top-right of the chart, each opening a vertical
+   popover panel. Brightness conveys state (active indicators / armed tools). */
+.overlay-launchers { position: absolute; top: 8px; left: 12px; z-index: 40; display: flex; flex-direction: column; gap: 6px; }
+.overlay-group { position: relative; }
+.overlay-launcher {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px;
+  background: rgba(22, 26, 34, 0.82); color: #b0b6c0;
+  border: 1px solid #2a2e39; border-radius: 6px;
+  cursor: pointer; backdrop-filter: blur(2px);
+  transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+.overlay-launcher:hover { color: #e6e9ee; background: rgba(42, 46, 57, 0.92); }
+.overlay-launcher[aria-expanded="true"], .overlay-launcher.active { color: #ffb74d; border-color: #3a4255; background: #2a2e39; }
+.overlay-panel {
+  position: absolute; top: 0; left: calc(100% + 6px);
+  min-width: 168px;
+  background: #161a22; border: 1px solid #232936; border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+  padding: 4px; z-index: 41;
+  display: flex; flex-direction: column; gap: 1px;
+  animation: usermenu-pop 0.12s ease-out;
+}
+.overlay-panel[hidden] { display: none; }
+.overlay-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left;
+  background: transparent; color: #888;
+  border: 0; border-radius: 6px;
+  padding: 7px 10px; font: inherit; font-size: 12px;
+  cursor: pointer; white-space: nowrap;
+}
+.overlay-row svg { flex-shrink: 0; opacity: 0.85; }
+.overlay-row:hover { background: #2a2e39; color: #d1d4dc; }
+/* active indicator / armed tool — brighter foreground */
+.overlay-row.active, .overlay-row.armed { color: #ffb74d; }
+.overlay-row.active svg, .overlay-row.armed svg { opacity: 1; }
+/* icon-only strip (tools panel): centered glyphs, no labels */
+.overlay-panel.icon-strip { min-width: 0; }
+.overlay-panel.icon-strip .overlay-row { justify-content: center; gap: 0; padding: 7px; }
+
+.measure-readout {
+  position: absolute; z-index: 40;
+  transform: translate(-50%, -100%);    /* anchor = point above the line, centered */
+  color: #ddd; font-family: monospace; font-size: 12px;
+  background: rgba(15, 18, 24, 0.82); border: 1px solid #2a2e39;
+  border-radius: 4px; padding: 3px 8px; pointer-events: none; white-space: nowrap;
+}
+.measure-readout:empty { display: none; }
+.measure-readout b { color: #ffb74d; }
+
+/* ---------- H-line floating style popup ---------- */
+.hline-popup {
+  position: absolute; z-index: 60;
+  display: flex; align-items: center; gap: 6px;
+  background: #161a22; border: 1px solid #232936; border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+  padding: 5px 7px;
+  animation: usermenu-pop 0.1s ease-out;
+}
+.hline-popup button { background: transparent; border: 1px solid transparent; border-radius: 5px; cursor: pointer; color: #b0b6c0; padding: 4px; display: inline-flex; align-items: center; justify-content: center; }
+.hline-popup button:hover { background: #2a2e39; color: #e6e9ee; }
+.hline-popup .hp-color { width: 24px; height: 24px; padding: 0; border: 1px solid #2a2e39; border-radius: 5px; background: #1e222d; cursor: pointer; }
+.hline-popup .hp-color::-webkit-color-swatch-wrapper { padding: 2px; }
+.hline-popup .hp-color::-webkit-color-swatch { border: none; border-radius: 3px; }
+.hp-widths { display: inline-flex; gap: 2px; }
+.hp-w { width: 24px; height: 24px; }
+.hp-w span { display: block; width: 14px; background: currentColor; border-radius: 1px; }
+.hp-w.active { background: #2a2e39; color: #ffb74d; border-color: #3a4255; }
+.hp-style span { display: block; width: 16px; border-bottom: 2px solid currentColor; }
+.hp-style.dashed span { border-bottom-style: dashed; }
+.hp-style.active, .hp-style:focus { color: #ffb74d; }
+.hp-del:hover { background: rgba(239,83,80,0.16) !important; color: #ef5350 !important; }
 
 .chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 #chart { flex: 1; min-height: 0; }
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
+#chart.hline-hover, #chart.hline-hover canvas { cursor: row-resize !important; }
 /* sub-pane visibility — no height transition so the chart's autoSize doesn't
    redraw at every interpolated height (was causing initial flicker).
    Inline style.height (set by the resize handle) overrides the defaults. */
@@ -383,16 +438,24 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; flex-shrink: 0; }
 .controls-left { display: flex; gap: 8px; align-items: center; justify-self: start; }
 .controls-center { display: flex; gap: 8px; align-items: center; justify-self: center; }
-.controls-right { display: flex; gap: 8px; align-items: center; justify-self: end; min-width: 0; }
+.controls-right { display: flex; gap: 8px; align-items: center; justify-self: stretch; justify-content: flex-end; min-width: 0; overflow: hidden; }
 .controls button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
 .controls-center button { min-width: 64px; }
 .controls button:hover:not(:disabled) { background: #2a2e39; }
 .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 .controls input, .controls select { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 2px 6px; }
-#cursor-info { font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#cursor-info { font-size: 12px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; pointer-events: none; }
 
-.indicators { padding: 6px 10px; background: #0f1218; border-top: 1px solid #1e222d; font-size: 12px; display: flex; gap: 12px; flex-wrap: wrap; flex-shrink: 0; }
-.indicators label { cursor: pointer; }
+/* Tick/Candle segmented toggle in the replay controls */
+.mode-pill { display: inline-flex; background: #1e222d; border: 1px solid #2a2e39; border-radius: 6px; padding: 2px; gap: 2px; }
+.mode-pill button { background: transparent; color: #8a93a3; border: 0; border-radius: 4px; padding: 3px 12px; font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4; }
+.mode-pill button:hover { color: #d1d4dc; }
+.mode-pill button.active { background: #ffb74d; color: #1e222d; font-weight: 600; }
+
+/* Replay transport icon buttons (Previous / Play-Pause / Next) */
+.controls-center .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px; min-width: 44px; }
+.icon-btn svg { display: block; }
+#play .play-icon[hidden], #play .pause-icon[hidden] { display: none; }
 
 .side-pane { display: flex; flex-direction: column; border-left: 1px solid #1e222d; background: #0f1218; overflow: hidden; }
 .trade-panel, .trades-panel, .tape-panel {

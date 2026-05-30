@@ -76,6 +76,10 @@ class CreateSessionReq(BaseModel):
 
 class StepReq(BaseModel):
     n: int = 1
+    # tick_back only: what forming-candle ticks the client already holds, so the
+    # server can skip resending them (the client slices its own history instead).
+    have_open: int | None = None     # candle open epoch-seconds the client has
+    have_count: int | None = None    # how many of that candle's ticks it has
 
 
 class ExtendHistoryReq(BaseModel):
@@ -286,24 +290,36 @@ async def back(
         n = max(1, min(req.n, 5000))
         sess.reset_tick_state()
         sess.cursor = max(0, sess.cursor - n)
-        new_time = sess.current_time()
-        survivors: list[Trade] = []
-        for t in sess.trades:
-            if t.created_time > new_time:
-                continue
-            if t.exit_time is not None and t.exit_time > new_time:
-                t.exit_time = None
-                t.exit_price = None
-                t.exit_reason = None
-                t.status = "open" if t.entry_time is not None else "pending"
-            if t.entry_time is not None and t.entry_time > new_time:
-                t.entry_time = None
-                t.entry_price = None
-                t.status = "pending"
-            survivors.append(t)
-        sess.trades = survivors
+        sess.rewind_trades(sess.current_time())
     await save_snapshot(db, sess)
     return _serialize_session(sess)
+
+
+@app.post("/api/session/{sid}/tick_back")
+async def tick_back(
+    sid: str, req: StepReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Tick-level Previous: rewind n aggTrades within the forming candle."""
+    sess = await _resolve(db, sid, user.id)
+    with sess.lock:
+        n = max(1, min(req.n, 5000))
+        sess.step_back_tick(n)
+        body = _serialize_session(sess)
+        # The forming-candle ticks can be huge (a busy 4h candle has tens of
+        # thousands of aggTrades). The client keeps its own per-candle history,
+        # so only resend when it can't have them: a boundary cross (different
+        # candle) or an insufficient buffer. `null` => client slices locally.
+        in_tick = sess.tick_aggs is not None and sess.tick_idx > 0
+        forming_open = (int(sess.df.iloc[sess.cursor + 1]["time"])
+                        if in_tick and sess.cursor + 1 < len(sess.df) else None)
+        client_has = (forming_open is not None
+                      and req.have_open == forming_open
+                      and req.have_count is not None
+                      and req.have_count >= sess.tick_idx)
+        body["forming_ticks"] = None if client_has else sess.forming_ticks()
+    await save_snapshot(db, sess)
+    return body
 
 
 @app.post("/api/session/{sid}/trade")

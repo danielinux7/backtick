@@ -104,6 +104,112 @@ def test_same_candle_fill_is_not_sl_eligible():
     assert t.status == "open" and t.exit_reason is None
 
 
+# --- step_back_tick: tick-level Previous ----------------------------------
+
+def _two_candle_session():
+    df = pd.DataFrame([
+        {"time": 1_000, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1.0},
+        {"time": 4_600, "open": 100, "high": 110, "low": 100, "close": 105, "volume": 1.0},
+    ])
+    return Session(id="t", symbol="X", market="spot", tf="1h",
+                   start="", end="", df=df, cursor=0)
+
+
+def test_step_back_tick_rewinds_idx_and_reopens_trade():
+    s = _two_candle_session()
+    # forming candle (index 1) with three revealed ticks at t=1000,1001,1002s
+    s.tick_aggs = pd.DataFrame([
+        {"time_ms": 1_000_000, "price": 100.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 1_001_000, "price": 101.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 1_002_000, "price": 102.0, "qty": 1.0, "is_buyer_maker": False},
+    ])
+    s.tick_idx = 3
+    t = open_trade("long", 102.0, tid="x")
+    t.entry_time = 1_002                       # filled on the last tick
+    s.trades = [t]
+
+    s.step_back_tick(2)                        # rewind to idx 1 (cursor time 1000)
+
+    assert s.tick_idx == 1
+    assert t.status == "pending" and t.entry_time is None   # entry undone
+
+
+def test_forming_ticks_returns_revealed_prints_for_partial_candle():
+    s = _two_candle_session()
+    s.tick_aggs = pd.DataFrame([
+        {"time_ms": 1_000_000, "price": 100.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 1_001_000, "price": 101.0, "qty": 2.0, "is_buyer_maker": True},
+        {"time_ms": 1_002_000, "price": 102.0, "qty": 3.0, "is_buyer_maker": False},
+    ])
+    s.tick_idx = 2                                  # only first two revealed
+
+    ticks = s.forming_ticks()
+
+    assert [t["price"] for t in ticks] == [100.0, 101.0]
+    assert [t["side"] for t in ticks] == ["buy", "sell"]   # is_buyer_maker -> sell
+    assert ticks[1]["time_ms"] == 1_001_000 and ticks[1]["qty"] == 2.0
+
+
+def test_forming_ticks_empty_when_not_mid_candle():
+    s = _two_candle_session()
+    assert s.forming_ticks() == []                  # tick_idx == 0, no aggs
+
+
+def test_step_back_tick_falls_back_to_candle_when_no_ticks_revealed(monkeypatch):
+    s = _two_candle_session()
+    s.cursor = 1                               # fully revealed, no forming ticks
+    s.tick_aggs = None
+    s.tick_idx = 0
+    # crossing into the previous candle tries to load its aggTrades; stub it out
+    # to an empty frame so the rewind settles at candle level without network.
+    monkeypatch.setattr("backend.replay.fetch_agg_trades",
+                        lambda *a, **k: pd.DataFrame(
+                            columns=["time_ms", "price", "qty", "is_buyer_maker"]))
+
+    s.step_back_tick(5)
+
+    assert s.cursor == 0 and s.tick_aggs is None
+
+
+def _three_candle_session():
+    df = pd.DataFrame([
+        {"time": 1_000, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1.0},
+        {"time": 4_600, "open": 100, "high": 110, "low": 100, "close": 105, "volume": 1.0},
+        {"time": 8_200, "open": 105, "high": 115, "low": 105, "close": 110, "volume": 1.0},
+    ])
+    return Session(id="t", symbol="X", market="spot", tf="1h",
+                   start="", end="", df=df, cursor=0)
+
+
+def test_step_back_tick_crosses_into_previous_candle_ticks(monkeypatch):
+    # forming candle (df index 2) with 3 of its ticks revealed; rewinding 5 should
+    # consume those 3, cross the boundary, and reveal the previous candle's aggs
+    # tick-by-tick (not jump a whole candle to candle-level).
+    s = _three_candle_session()
+    s.cursor = 1                               # forming candle is df index 2
+    s.tick_aggs = pd.DataFrame([
+        {"time_ms": 8_200_000, "price": 105.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 8_201_000, "price": 106.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 8_202_000, "price": 107.0, "qty": 1.0, "is_buyer_maker": False},
+    ])
+    s.tick_idx = 3
+    # the previous candle (df index 1) has 4 aggTrades
+    prev = pd.DataFrame([
+        {"time_ms": 4_600_000, "price": 100.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 4_601_000, "price": 101.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 4_602_000, "price": 102.0, "qty": 1.0, "is_buyer_maker": False},
+        {"time_ms": 4_603_000, "price": 103.0, "qty": 1.0, "is_buyer_maker": False},
+    ])
+    monkeypatch.setattr("backend.replay.fetch_agg_trades", lambda *a, **k: prev)
+
+    s.step_back_tick(5)                         # 3 to empty forming + 2 into prev
+
+    # crossed back one candle, now forming the previous candle with 2 ticks left
+    assert s.cursor == 0
+    assert s.tick_idx == 2                      # 4 revealed then rewound by 2
+    assert s.current_price() == 101.0           # price of the 2nd revealed tick
+
+
 # --- snapshot round-trip ---------------------------------------------------
 
 def test_snapshot_round_trip_preserves_trades_and_cursor():

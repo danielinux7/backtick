@@ -1,12 +1,14 @@
 // Backtick service worker.
-// Cache-first for the static shell (HTML + JS + CSS + icons + lightweight-charts CDN).
+// Network-first (with cache fallback) for the same-origin shell — HTML + JS +
+// CSS — so markup and script always update together. Cache-first for the
+// cross-origin CDN libs (lightweight-charts, flatpickr) and icons.
 // Network-only for /api/* — never cache mutable session/trade state.
 // Bump CACHE_VERSION on every deploy so old shells are evicted.
 
 // Bump on every meaningful frontend release — the install handler precaches
 // under this key and activate evicts older keys, so visitors get the new
 // assets on the next load.
-const CACHE_VERSION = "5f922c4b84";
+const CACHE_VERSION = "dc7e9a2a03";
 const CACHE = `backtick-shell-${CACHE_VERSION}`;
 const SHELL = [
   "/",
@@ -57,23 +59,21 @@ self.addEventListener("fetch", (event) => {
   // API calls: always network. We do NOT want to serve cached trade state.
   if (url.pathname.startsWith("/api/")) return;
 
-  // External CDN assets (lightweight-charts, flatpickr): cache-first.
-  // Same-origin static assets: cache-first.
-  // HTML pages: network-first so the shell stays fresh, with a cache fallback
-  // when offline.
-  const isHTML = req.headers.get("accept")?.includes("text/html");
-
-  if (isHTML) {
+  // Cross-origin CDN assets (lightweight-charts, flatpickr) are immutable and
+  // versioned in their URLs — cache-first for instant (incl. offline) loads.
+  if (url.origin !== self.location.origin) {
     event.respondWith(
       (async () => {
+        const hit = await caches.match(req);
+        if (hit) return hit;
         try {
           const fresh = await fetch(req);
-          const cache = await caches.open(CACHE);
-          cache.put(req, fresh.clone());
+          if (fresh && fresh.status === 200) {
+            const cache = await caches.open(CACHE);
+            cache.put(req, fresh.clone());
+          }
           return fresh;
         } catch (_) {
-          const hit = await caches.match(req);
-          if (hit) return hit;
           return new Response("Offline", { status: 503 });
         }
       })(),
@@ -81,10 +81,13 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // Same-origin shell — HTML *and* /static/* JS/CSS — network-first with a
+  // cache fallback. Serving these cache-first let a freshly-fetched index.html
+  // pair with a stale app.js for one reload (new markup + old behavior); going
+  // network-first keeps markup and script in lockstep. The precached SHELL is
+  // the offline fallback.
   event.respondWith(
     (async () => {
-      const hit = await caches.match(req);
-      if (hit) return hit;
       try {
         const fresh = await fetch(req);
         if (fresh && fresh.status === 200 && fresh.type === "basic") {
@@ -93,6 +96,8 @@ self.addEventListener("fetch", (event) => {
         }
         return fresh;
       } catch (_) {
+        const hit = await caches.match(req);
+        if (hit) return hit;
         return new Response("Offline", { status: 503 });
       }
     })(),

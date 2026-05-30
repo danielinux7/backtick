@@ -2,12 +2,14 @@ __pycache__/
 *.pyc
 data_cache/**/*.parquet
 data_cache/**/*.csv
+data_cache/*.json
 .venv/
 
 # node / playwright E2E
 node_modules/
 test-results/
 playwright-report/
+.playwright-mcp/
 
 # local sqlite dev db
 backtick.db

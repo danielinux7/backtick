@@ -153,6 +153,24 @@ class Session:
             "volume": float(revealed["qty"].sum()),
         }
 
+    def forming_ticks(self) -> list[dict]:
+        """Revealed aggTrades of the current forming candle, in the same shape as
+        step_tick's `new_ticks`. Lets the frontend rebuild its partial-candle
+        buffer after a tick-level rewind (where no *new* ticks are streamed), so
+        Previous redraws the shrunken partial instead of dropping it."""
+        if self.tick_aggs is None or self.tick_idx == 0:
+            return []
+        revealed = self.tick_aggs.iloc[: self.tick_idx]
+        return [
+            {
+                "time_ms": int(t.time_ms),
+                "price": float(t.price),
+                "qty": float(t.qty),
+                "side": "sell" if bool(t.is_buyer_maker) else "buy",
+            }
+            for t in revealed.itertuples(index=False)
+        ]
+
     def current_price(self) -> float:
         if self.tick_aggs is not None and self.tick_idx > 0:
             return float(self.tick_aggs.iloc[self.tick_idx - 1]["price"])
@@ -181,6 +199,54 @@ class Session:
     def reset_tick_state(self) -> None:
         self.tick_aggs = None
         self.tick_idx = 0
+
+    def rewind_trades(self, new_time: int) -> None:
+        """Drop trades created after `new_time` and reopen any whose fill/exit
+        happened after it. Shared by candle-level `back` and tick-level rewind."""
+        survivors: list[Trade] = []
+        for t in self.trades:
+            if t.created_time > new_time:
+                continue
+            if t.exit_time is not None and t.exit_time > new_time:
+                t.exit_time = None
+                t.exit_price = None
+                t.exit_reason = None
+                t.status = "open" if t.entry_time is not None else "pending"
+            if t.entry_time is not None and t.entry_time > new_time:
+                t.entry_time = None
+                t.entry_price = None
+                t.status = "pending"
+            survivors.append(t)
+        self.trades = survivors
+
+    def step_back_tick(self, n: int) -> None:
+        """Tick-level Previous: rewind n revealed aggTrades, crossing candle
+        boundaries so it keeps stepping tick-by-tick into the *previous* candle
+        rather than dropping to candle-level once the forming candle empties
+        (the mirror of step_tick's forward auto-advance). Settles at candle
+        level when the previous candle has no aggTrades (gap) or we hit the
+        start. Reverts trades to the new cursor time, mirroring `back`."""
+        remaining = n
+        while remaining > 0:
+            # rewind within the current forming candle
+            if self.tick_aggs is not None and self.tick_idx > 0:
+                take = min(remaining, self.tick_idx)
+                self.tick_idx -= take
+                remaining -= take
+                if remaining == 0:
+                    break
+            # forming candle exhausted (tick_idx == 0) — cross into the previous
+            # candle and reveal it fully, then the loop rewinds into its ticks
+            if self.cursor <= 0:
+                self.reset_tick_state()
+                break
+            self.cursor -= 1
+            self._load_tick_aggs()              # aggs for new forming candle df[cursor+1]
+            if self.tick_aggs is None or self.tick_aggs.empty:
+                self.reset_tick_state()         # no ticks for this candle — candle level
+                break
+            self.tick_idx = len(self.tick_aggs)
+        self.rewind_trades(self.current_time())
 
     def step_tick(self, n: int) -> tuple[list[dict], list[Trade]]:
         """Reveal the next n aggTrades, processing limits / SL / TP per tick.

@@ -338,9 +338,10 @@
     return out;
   };
   const selectedIndicators = () =>
-    [...document.querySelectorAll(".ind:checked")].map((el) => ({
+    [...document.querySelectorAll(".ind.active")].map((el) => ({
       kind: el.dataset.kind, period: parseInt(el.dataset.period, 10),
     }));
+  const indActive = (kind) => !!document.querySelector(`.ind[data-kind="${kind}"].active`);
   const renderIndicators = () => {
     if (!session) return;
     const wanted = selectedIndicators();
@@ -365,14 +366,14 @@
       rsiSeries.setData([]);
       showRsi(false);
     }
-    const wantCvd = !!document.querySelector('.ind[data-kind="cvd"]:checked');
+    const wantCvd = indActive("cvd");
     if (wantCvd) { showCvd(true); fetchCvd(); }
     else { showCvd(false); cvdSeries.setData([]); cvdLastCursor = null; }
 
-    const wantFootprint = !!document.querySelector('.ind[data-kind="footprint"]:checked');
+    const wantFootprint = indActive("footprint");
     setFootprintVisible(wantFootprint);
 
-    const wantLiq = !!document.querySelector('.ind[data-kind="liq"]:checked');
+    const wantLiq = indActive("liq");
     if (wantLiq !== liqEnabled) {
       liqEnabled = wantLiq;
       if (!liqEnabled) {
@@ -384,7 +385,7 @@
       fetchLiqMarkers();
     }
 
-    const wantVolume = !!document.querySelector('.ind[data-kind="volume"]:checked');
+    const wantVolume = indActive("volume");
     volumeSeries.applyOptions({ visible: wantVolume });
     if (wantVolume) {
       volumeSeries.setData(session.candles.map((c) => ({
@@ -395,7 +396,7 @@
     } else {
       volumeSeries.setData([]);
     }
-    const wantVolProfile = !!document.querySelector('.ind[data-kind="volprofile"]:checked');
+    const wantVolProfile = indActive("volprofile");
     setVolumeProfileVisible(wantVolProfile);
   };
 
@@ -427,11 +428,13 @@
   const setupForm = $("#setup-form");
   const today = new Date();
   const defaultReplay = new Date(today.getTime() - 60 * 86400 * 1000);
+  let autoLoadReady = false;   // gate auto-load until initial wiring is done
   flatpickr("#replay-date", {
     dateFormat: "d/m/Y",
     maxDate: "today",
     defaultDate: defaultReplay,
     allowInput: true,
+    onChange: () => { if (autoLoadReady) loadSession(); },
   });
 
   // ---- State
@@ -442,10 +445,17 @@
   let liveWs = null;            // Binance WebSocket in live mode
 
   // drawings
-  const hlines = [];                   // [{ id, line, price, color }]
+  const hlines = [];                   // [{ id, line, price, color, width, style }]
   let hlineCounter = 0;
+  let hlineDrag = null;                // { h, startY, moved } while dragging a line
+  let hlinePopupEl = null;             // floating style popup for the active line
   let measureFirst = null;             // { time, price }
   let measureSeries = null;            // line series for measure
+  let measureBounds = null;            // { s, e } endpoints, for pinning the readout to the line
+
+  // replay speed mode — "tick" (default) or "candle"; the #speed dropdown is
+  // repopulated from SPEED_OPTS whenever this flips.
+  let replayMode = "tick";
 
   const api = async (path, opts = {}) => {
     const { signal, ...rest } = opts;
@@ -1441,6 +1451,7 @@
   };
 
   chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    positionMeasureLabel();              // keep the measure readout pinned to its line
     if (!range || !session) return;
     if (range.from < EXTEND_THRESHOLD) extendHistory();
   });
@@ -1599,11 +1610,14 @@
     const tfSec = TF_SECONDS[tf];
     if (!tfSec) { setStatus("unsupported tf", true); return; }
 
+    // warmup is no longer a user-facing field — replay shows a fixed lead-in,
+    // and live mode overrides this with a ~90-day minimum below.
+    const REPLAY_WARMUP = 100;
     const body = {
       symbol: fd.get("symbol").trim().toUpperCase(),
       market: fd.get("market"),
       tf,
-      warmup: parseInt(fd.get("warmup"), 10) || 100,
+      warmup: REPLAY_WARMUP,
     };
 
     if (mode === "live") {
@@ -1811,6 +1825,45 @@
       applySession(data);
     } catch (err) { setStatus(err.message, true); }
   };
+  // tick-level Previous — rewind n aggTrades within the forming candle
+  const tickBack = async (n) => {
+    if (!session) return;
+    try {
+      // Tell the server which forming-candle ticks we already hold so it can
+      // skip resending them (they can be tens of thousands per candle). We keep
+      // our own history and slice it locally for within-candle Previous; the
+      // server only ships ticks on a boundary cross or when our buffer is short.
+      const data = await api(`/api/session/${session.id}/tick_back`, {
+        method: "POST",
+        body: JSON.stringify({
+          n,
+          have_open: revealedForming.candleOpenSec,
+          have_count: revealedForming.ticks.length,
+        }),
+      });
+      session = data;
+      // discard any pending play lookahead, but preserve our tick history
+      tickQueue = [];
+      simClockMs = null;
+      tickAtEnd = false;
+      const ft = data.forming_ticks;
+      if (ft == null) {
+        // server confirmed we already hold this candle's ticks — slice locally
+        // to the rewound position (cheap; no payload was sent)
+        revealedForming.ticks = revealedForming.ticks.slice(0, data.tick_idx);
+      } else if (ft.length) {
+        // crossed into a candle we hadn't revealed (or our buffer was short) —
+        // adopt the server's authoritative ticks for it
+        const tfSec = TF_SECONDS[session.tf];
+        const co = Math.floor(ft[0].time_ms / (tfSec * 1000)) * tfSec;
+        revealedForming = { candleOpenSec: co, ticks: ft.slice() };
+      } else {
+        // rewound to a candle boundary — no forming candle to draw
+        resetRevealedForming();
+      }
+      applySession(data);
+    } catch (err) { setStatus(err.message, true); }
+  };
 
   const placeTrade = async (side) => {
     if (!session) return;
@@ -1887,25 +1940,72 @@
     } catch (err) { setStatus(err.message, true); }
   };
 
-  const isTickSpeed = () => $("#speed").value.startsWith("tick:");
-  const tickSpeedFor = () => parseFloat($("#speed").value.slice(5));
+  // Speed dropdown options per mode. Tick = ticks/frame multiplier; Candle =
+  // interval in ms between auto-steps. Defaults marked with `def`.
+  // `value`: tick = playback multiplier; candle = autoplay interval (ms).
+  // `step`: how many ticks/candles Previous & Next jump at this speed.
+  const SPEED_OPTS = {
+    tick: [
+      { value: "1",   label: "1x",   step: 1 },
+      { value: "10",  label: "10x",  step: 10 },
+      { value: "50",  label: "50x",  step: 50, def: true },
+      { value: "100", label: "100x", step: 100 },
+      { value: "200", label: "200x", step: 200 },
+    ],
+    candle: [
+      { value: "1000", label: "1x",  step: 1 },
+      { value: "500",  label: "2x",  step: 2 },
+      { value: "250",  label: "4x",  step: 4, def: true },
+      { value: "100",  label: "10x", step: 10 },
+      { value: "50",   label: "20x", step: 20 },
+    ],
+  };
+  // How many ticks (tick mode) / candles (candle mode) one Prev/Next jumps.
+  const getReplayStep = () => {
+    const o = SPEED_OPTS[replayMode].find((x) => x.value === $("#speed").value);
+    return o ? o.step : 1;
+  };
+  const populateSpeedOptions = () => {
+    const sel = $("#speed");
+    sel.innerHTML = "";
+    for (const o of SPEED_OPTS[replayMode]) {
+      const opt = document.createElement("option");
+      opt.value = o.value; opt.textContent = o.label;
+      if (o.def) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  };
+
+  const isTickSpeed = () => replayMode === "tick";
+  const tickSpeedFor = () => parseFloat($("#speed").value) || 1;
   const isPlaying = () => !!(playTimer || tickRAF);
+
+  const setPlayIcon = (playing) => {
+    const b = $("#play");
+    // These are <svg> (SVGElement), so the `.hidden` IDL property is a no-op
+    // expando — it never sets the real `hidden` attribute the CSS keys off.
+    // Toggle the attribute explicitly so `#play .*-icon[hidden]` actually hides.
+    b.querySelector(".play-icon").toggleAttribute("hidden", playing);
+    b.querySelector(".pause-icon").toggleAttribute("hidden", !playing);
+    b.setAttribute("aria-label", playing ? "Pause" : "Play");
+    b.title = playing ? "Pause (Space)" : "Play (Space)";
+  };
 
   const startPlay = () => {
     if (playTimer || tickRAF || !session) return;
     if (session.cursor >= session.total - 1 && !session.in_tick) return;
-    $("#play").textContent = "Pause";
+    setPlayIcon(true);
     if (isTickSpeed()) {
       tickStartPlay(tickSpeedFor());
     } else {
       const speed = parseInt($("#speed").value, 10);
-      playTimer = setInterval(() => stepN(parseInt($("#step-n").value, 10) || 1), speed);
+      playTimer = setInterval(() => stepN(1), speed);
     }
   };
   const stopPlay = () => {
     if (playTimer) { clearInterval(playTimer); playTimer = null; }
     tickStopPlay();
-    $("#play").textContent = "Play";
+    setPlayIcon(false);
   };
 
   // ---- Arming / chart click handling
@@ -1916,6 +2016,7 @@
   const armFor = (kind) => {
     armedFor = kind;
     chartEl.classList.add("armed");
+    $("#cursor-tool").classList.remove("active");   // a tool is active, not the cursor
     document.querySelectorAll(".pick, .tool").forEach((b) => {
       const k = b.dataset.pick || b.dataset.tool;
       b.classList.toggle("armed", k === kind);
@@ -1927,6 +2028,7 @@
   const disarm = () => {
     armedFor = null;
     chartEl.classList.remove("armed");
+    $("#cursor-tool").classList.add("active");      // back to resting cursor state
     document.querySelectorAll(".pick, .tool").forEach((b) => b.classList.remove("armed"));
     $("#arm-hint").style.display = "none";
     // if measure had only first point, clear it
@@ -1949,63 +2051,161 @@
     return 6;
   };
 
-  const addHline = (price) => {
-    const color = $("#hline-color").value || "#90caf9";
-    const id = `hl_${++hlineCounter}`;
-    const line = candleSeries.createPriceLine({
-      price, color, lineStyle: 0, lineWidth: 1,
-      axisLabelVisible: true, title: `H ${price.toFixed(getPrecision(price))}`,
+  const HLINE_DEFAULT_COLOR = "#90caf9";
+  const HLINE_HIT_PX = 6;               // pixel tolerance for grabbing a line
+
+  const hlineTitle = (price) => `H ${price.toFixed(getPrecision(price))}`;
+  // Apply a partial change to a line and keep its PriceLine + axis label in sync.
+  const updateHline = (h, patch) => {
+    Object.assign(h, patch);
+    h.line.applyOptions({
+      price: h.price, color: h.color, lineWidth: h.width, lineStyle: h.style,
+      title: hlineTitle(h.price),
     });
-    hlines.push({ id, line, price, color });
-    renderHlines();
+  };
+  const addHline = (price) => {
+    const id = `hl_${++hlineCounter}`;
+    const color = HLINE_DEFAULT_COLOR, width = 1, style = 0;
+    const line = candleSeries.createPriceLine({
+      price, color, lineStyle: style, lineWidth: width,
+      axisLabelVisible: true, title: hlineTitle(price),
+    });
+    hlines.push({ id, line, price, color, width, style });
   };
   const removeHline = (id) => {
     const idx = hlines.findIndex((h) => h.id === id);
     if (idx < 0) return;
     candleSeries.removePriceLine(hlines[idx].line);
     hlines.splice(idx, 1);
-    renderHlines();
-  };
-  const updateHlineColor = (id, color) => {
-    const h = hlines.find((x) => x.id === id);
-    if (!h) return;
-    h.color = color;
-    h.line.applyOptions({ color });
-  };
-  const renderHlines = () => {
-    const strip = $("#hlines-strip");
-    strip.innerHTML = "";
-    for (const h of hlines) {
-      const chip = document.createElement("span");
-      chip.className = "hline-chip";
-      const colorInput = document.createElement("input");
-      colorInput.type = "color";
-      colorInput.value = h.color;
-      colorInput.title = "line color";
-      colorInput.addEventListener("input", (e) => updateHlineColor(h.id, e.target.value));
-      const label = document.createElement("span");
-      label.className = "px";
-      label.textContent = h.price.toFixed(getPrecision(h.price));
-      const del = document.createElement("button");
-      del.type = "button";
-      del.textContent = "×";
-      del.title = "remove";
-      del.addEventListener("click", () => removeHline(h.id));
-      chip.append(colorInput, label, del);
-      strip.appendChild(chip);
-    }
   };
   const clearHlines = () => {
     for (const h of hlines) candleSeries.removePriceLine(h.line);
     hlines.length = 0;
-    renderHlines();
   };
   const clearMeasure = () => {
     if (measureSeries) { chart.removeSeries(measureSeries); measureSeries = null; }
     measureFirst = null;
+    measureBounds = null;
     $("#measure-summary").textContent = "";
   };
-  const clearAllDrawings = () => { clearHlines(); clearMeasure(); };
+  // Pin the measure readout above the drawn line, centered over its span, so it
+  // tracks the line as the chart pans/zooms (called from the range-change sub).
+  const positionMeasureLabel = () => {
+    const el = $("#measure-summary");
+    if (!measureBounds || !el.innerHTML) return;
+    const ts = chart.timeScale();
+    const x1 = ts.timeToCoordinate(measureBounds.s.time);
+    const x2 = ts.timeToCoordinate(measureBounds.e.time);
+    const y1 = candleSeries.priceToCoordinate(measureBounds.s.price);
+    const y2 = candleSeries.priceToCoordinate(measureBounds.e.price);
+    if (x1 == null || x2 == null || y1 == null || y2 == null) { el.style.visibility = "hidden"; return; }
+    el.style.visibility = "";
+    el.style.left = `${(x1 + x2) / 2}px`;
+    el.style.top = `${Math.min(y1, y2) - 8}px`;
+  };
+  const clearAllDrawings = () => { closeHlinePopup(); clearHlines(); clearMeasure(); };
+
+  // ---- H-line drag + style popup
+  // PriceLine has no built-in drag, so we hit-test mouse events against each
+  // line's pixel position. A drag repositions the price; a click (no drag)
+  // opens the style popup.
+  const hlineAt = (y) => {
+    for (let i = hlines.length - 1; i >= 0; i--) {
+      const ly = candleSeries.priceToCoordinate(hlines[i].price);
+      if (ly != null && Math.abs(ly - y) <= HLINE_HIT_PX) return hlines[i];
+    }
+    return null;
+  };
+  const closeHlinePopup = () => {
+    if (hlinePopupEl) { hlinePopupEl.remove(); hlinePopupEl = null; }
+  };
+  const openHlinePopup = (h, evt) => {
+    closeHlinePopup();
+    const stack = $(".chart-stack");
+    const rect = stack.getBoundingClientRect();
+    const pop = document.createElement("div");
+    pop.className = "hline-popup";
+    const x = evt ? evt.clientX - rect.left : 80;
+    const ly = candleSeries.priceToCoordinate(h.price) ?? 40;
+    pop.style.left = `${Math.max(8, Math.min(x - 96, rect.width - 200))}px`;
+    pop.style.top = `${Math.max(8, ly - 46)}px`;
+
+    const color = document.createElement("input");
+    color.type = "color"; color.value = h.color; color.title = "Color";
+    color.className = "hp-color";
+    color.addEventListener("input", () => updateHline(h, { color: color.value }));
+
+    const widths = document.createElement("div");
+    widths.className = "hp-widths";
+    [1, 2, 3].forEach((w) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "hp-w"; b.dataset.w = String(w);
+      b.title = `${w}px`;
+      b.innerHTML = `<span style="height:${w}px"></span>`;
+      b.classList.toggle("active", h.width === w);
+      b.addEventListener("click", () => {
+        updateHline(h, { width: w });
+        widths.querySelectorAll(".hp-w").forEach((x) => x.classList.toggle("active", Number(x.dataset.w) === w));
+      });
+      widths.appendChild(b);
+    });
+
+    const styleBtn = document.createElement("button");
+    styleBtn.type = "button"; styleBtn.className = "hp-style";
+    styleBtn.innerHTML = "<span></span>";
+    const renderStyleBtn = () => {
+      styleBtn.classList.toggle("dashed", h.style === 2);
+      styleBtn.title = h.style === 2 ? "Dashed — click for solid" : "Solid — click for dashed";
+    };
+    renderStyleBtn();
+    styleBtn.addEventListener("click", () => { updateHline(h, { style: h.style === 2 ? 0 : 2 }); renderStyleBtn(); });
+
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "hp-del"; del.title = "Delete line";
+    del.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+    del.addEventListener("click", () => { removeHline(h.id); closeHlinePopup(); });
+
+    pop.append(color, widths, styleBtn, del);
+    stack.appendChild(pop);
+    hlinePopupEl = pop;
+  };
+
+  // grab a line on mousedown (capture phase, before the chart starts panning)
+  chartEl.addEventListener("mousedown", (e) => {
+    if (armedFor || e.button !== 0) return;     // placing a tool — let click handler run
+    const rect = chartEl.getBoundingClientRect();
+    const h = hlineAt(e.clientY - rect.top);
+    if (!h) return;
+    hlineDrag = { h, startY: e.clientY, moved: false };
+    chartEl.classList.add("hline-hover");
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  window.addEventListener("mousemove", (e) => {
+    if (!hlineDrag) return;
+    if (Math.abs(e.clientY - hlineDrag.startY) > 3) hlineDrag.moved = true;
+    const rect = chartEl.getBoundingClientRect();
+    const price = candleSeries.coordinateToPrice(e.clientY - rect.top);
+    if (price != null && isFinite(price)) updateHline(hlineDrag.h, { price });
+  });
+  window.addEventListener("mouseup", (e) => {
+    if (!hlineDrag) return;
+    const { h, moved } = hlineDrag;
+    hlineDrag = null;
+    if (!moved) openHlinePopup(h, e);    // a click, not a drag → style popup
+  });
+  // row-resize cursor when hovering over a line (and not arming/dragging)
+  chartEl.addEventListener("mousemove", (e) => {
+    if (hlineDrag) return;
+    if (armedFor) { chartEl.classList.remove("hline-hover"); return; }
+    const rect = chartEl.getBoundingClientRect();
+    chartEl.classList.toggle("hline-hover", !!hlineAt(e.clientY - rect.top));
+  });
+  // dismiss the popup when clicking anywhere outside it
+  document.addEventListener("mousedown", (e) => {
+    if (hlinePopupEl && !hlinePopupEl.contains(e.target)) closeHlinePopup();
+  }, true);
 
   const finishMeasure = (second) => {
     const a = measureFirst;
@@ -2031,6 +2231,8 @@
       `  (<b>${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</b>)` +
       `  ·  ${human}` +
       (bars != null ? `  ·  <b>${bars}</b> bars` : "");
+    measureBounds = { s, e };
+    positionMeasureLabel();
     measureFirst = null;
   };
 
@@ -2102,24 +2304,34 @@
   });
   refreshModeUI();
 
-  setupForm.addEventListener("submit", (e) => { e.preventDefault(); loadSession(); });
-
-  // in live mode, changing timeframe or market auto-reloads (the Load button
-  // is hidden). Symbol still needs Enter / form submit because typing into
-  // a text input shouldn't fire a reload per keystroke.
-  const autoLoadIfLive = () => { if (modeSelect.value === "live") loadSession(); };
-  $("#tf-select").addEventListener("change", autoLoadIfLive);
-  setupForm.querySelector('select[name="market"]').addEventListener("change", autoLoadIfLive);
+  // The Load button is gone — the chart reloads whenever a setup field is
+  // committed. Selects and the date picker fire `change` immediately; the
+  // symbol text input fires `change` on Enter/blur (not per keystroke), and
+  // the symbol picker calls form.requestSubmit() → the submit handler below.
+  const autoLoad = () => { if (autoLoadReady) loadSession(); };
+  setupForm.addEventListener("submit", (e) => { e.preventDefault(); autoLoad(); });
+  $("#symbol-input").addEventListener("change", autoLoad);
+  $("#tf-select").addEventListener("change", autoLoad);
+  setupForm.querySelector('select[name="market"]').addEventListener("change", autoLoad);
   $("#next-1").addEventListener("click", () => {
-    const n = parseInt($("#step-n").value, 10) || 1;
+    const n = getReplayStep();
     if (isTickSpeed()) tickNext(n);
     else stepN(n);
   });
-  $("#back-1").addEventListener("click", () => backN(parseInt($("#step-n").value, 10) || 1));
+  $("#back-1").addEventListener("click", () => {
+    const n = getReplayStep();
+    if (isTickSpeed()) tickBack(n);
+    else backN(n);
+  });
   $("#play").addEventListener("click", () => (isPlaying() ? stopPlay() : startPlay()));
   $("#long-btn").addEventListener("click", () => placeTrade("long"));
   $("#short-btn").addEventListener("click", () => placeTrade("short"));
-  document.querySelectorAll(".ind").forEach((el) => el.addEventListener("change", renderIndicators));
+  document.querySelectorAll(".ind").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      btn.classList.toggle("active");
+      renderIndicators();
+    });
+  });
   const tapePctSlider = $("#tape-large-pct");
   const updateTapePctReadout = () => {
     const pct = (parseInt(tapePctSlider.value, 10) || 50) / 10;
@@ -2131,18 +2343,59 @@
   };
   tapePctSlider.addEventListener("input", () => { updateTapePctReadout(); renderTape(); });
   updateTapePctReadout();
-  // Track previous mode so we can drop the pending tick queue when leaving
-  // tick mode (those ticks would no longer match where the cursor will be).
-  let _prevSpeedTick = isTickSpeed();
-  $("#speed").addEventListener("change", () => {
-    const wasPlaying = !!(playTimer || tickRAF);
+  // Tick/Candle pill — switching mode repopulates the speed dropdown and (when
+  // leaving tick mode) drops the pending tick queue, since those ticks no
+  // longer match where the candle cursor will be.
+  populateSpeedOptions();
+  const speedMode = $("#speed-mode");
+  speedMode.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-mode]");
+    if (!btn || btn.dataset.mode === replayMode) return;
+    const wasPlaying = isPlaying();
     if (wasPlaying) stopPlay();
-    const nowTick = isTickSpeed();
-    if (_prevSpeedTick && !nowTick) resetTickReplay();
-    _prevSpeedTick = nowTick;
+    if (replayMode === "tick") resetTickReplay();   // leaving tick mode
+    replayMode = btn.dataset.mode;
+    speedMode.querySelectorAll("button").forEach((b) => {
+      const on = b.dataset.mode === replayMode;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", String(on));
+    });
+    populateSpeedOptions();
     if (wasPlaying) startPlay();
-    else if (nowTick) tickSpeed = tickSpeedFor();   // record speed for next Play
+    else if (replayMode === "tick") tickSpeed = tickSpeedFor();
   });
+  $("#speed").addEventListener("change", () => {
+    if (isPlaying()) { stopPlay(); startPlay(); }      // re-arm at the new speed
+    else if (isTickSpeed()) tickSpeed = tickSpeedFor();
+  });
+
+  // Chart overlay launchers — Tools and Indicators panels anchored top-right.
+  const overlayGroups = [
+    { btn: $("#tools-launcher"), panel: $("#tools-panel") },
+    { btn: $("#ind-launcher"),   panel: $("#ind-panel") },
+  ];
+  const closeOverlayPanels = (except) => {
+    for (const g of overlayGroups) {
+      if (g.panel === except) continue;
+      g.panel.hidden = true;
+      g.btn.setAttribute("aria-expanded", "false");
+    }
+  };
+  for (const g of overlayGroups) {
+    g.btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const willOpen = g.panel.hidden;
+      closeOverlayPanels(willOpen ? g.panel : null);
+      g.panel.hidden = !willOpen;
+      g.btn.setAttribute("aria-expanded", String(willOpen));
+    });
+  }
+  document.addEventListener("click", (e) => {
+    if (e.target.closest(".overlay-group")) return;   // clicks inside a panel keep it open
+    closeOverlayPanels(null);
+  });
+  // Crosshair / cursor — cancels any armed tool and clears the arm hint.
+  $("#cursor-tool").addEventListener("click", () => { disarm(); closeOverlayPanels(null); });
   $("#t-type").addEventListener("change", (e) => {
     const isLimit = e.target.value === "limit";
     $("#limit-row").style.display = isLimit ? "" : "none";
@@ -2162,12 +2415,13 @@
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       const kind = btn.dataset.tool;
+      closeOverlayPanels(null);
       if (armedFor === kind) { disarm(); return; }
       if (kind === "measure") clearMeasure();
       armFor(kind);
     });
   });
-  $("#clear-drawings").addEventListener("click", clearAllDrawings);
+  $("#clear-drawings").addEventListener("click", () => { clearAllDrawings(); closeOverlayPanels(null); });
 
   // collapsible side-pane panels — click a header to toggle
   document.querySelectorAll(".side-pane > .trade-panel > h3, " +
@@ -2190,8 +2444,8 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && armedFor) { disarm(); return; }
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-    if (e.key === "ArrowRight") { e.preventDefault(); stepN(parseInt($("#step-n").value, 10) || 1); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); backN(parseInt($("#step-n").value, 10) || 1); }
+    if (e.key === "ArrowRight") { e.preventDefault(); const n = getReplayStep(); isTickSpeed() ? tickNext(n) : stepN(n); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); const n = getReplayStep(); isTickSpeed() ? tickBack(n) : backN(n); }
     else if (e.key === " ") { e.preventDefault(); isPlaying() ? stopPlay() : startPlay(); }
     else if (e.key.toLowerCase() === "l") placeTrade("long");
     else if (e.key.toLowerCase() === "s") placeTrade("short");
@@ -2200,5 +2454,7 @@
     else if (e.key.toLowerCase() === "r") { resetZoomLock(); setStatus("zoom reset"); }
   });
 
+  setPlayIcon(false);
+  autoLoadReady = true;
   loadSession();
 })();
