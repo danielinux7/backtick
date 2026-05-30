@@ -46,12 +46,13 @@
 
   // ---- Chart setup
   const chartEl = $("#chart");
-  const rsiEl = $("#rsi-chart");
-  const cvdEl = $("#cvd-chart");
 
+  // shared so a line drag can disable pan/scale and restore it on release
+  const H_SCALE = { mouseWheel: false, pinch: false, axisPressedMouseMove: true };
+  const H_SCROLL = { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true };
   const chart = LightweightCharts.createChart(chartEl, {
     autoSize: true,
-    layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
+    layout: { background: { color: "#131722" }, textColor: "#d1d4dc", attributionLogo: false },
     grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
     timeScale: {
       timeVisible: true, secondsVisible: false, borderColor: "#2a2e39",
@@ -63,9 +64,14 @@
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     localization: { timeFormatter: (time) => tzYmdHm(time) },
     // disable plain-wheel zoom — we route Ctrl+Wheel through our own handler
-    handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: true },
-    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+    handleScale: H_SCALE,
+    handleScroll: H_SCROLL,
   });
+  // Freeze the chart while dragging a price line. Toggling the chart options off
+  // stops LWC's own pan handling for both mouse and touch (stopPropagation alone
+  // doesn't, because LWC's touch path uses its own listeners).
+  const setChartPan = (on) =>
+    chart.applyOptions({ handleScroll: on ? H_SCROLL : false, handleScale: on ? H_SCALE : false });
   const candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
     upColor: "#26a69a", downColor: "#ef5350",
     borderUpColor: "#26a69a", borderDownColor: "#ef5350",
@@ -82,95 +88,55 @@
   });
   volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
-  const rsiChart = LightweightCharts.createChart(rsiEl, {
-    autoSize: true,
-    layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
-    grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
-    timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#2a2e39", visible: false },
-    rightPriceScale: { borderColor: "#2a2e39" },
-    handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: true },
-    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
-  });
-  const rsiSeries = rsiChart.addSeries(LightweightCharts.LineSeries, { color: "#bb86fc", lineWidth: 1 });
-
-  const cvdChart = LightweightCharts.createChart(cvdEl, {
-    autoSize: true,
-    layout: { background: { color: "#131722" }, textColor: "#d1d4dc" },
-    grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
-    timeScale: { timeVisible: true, secondsVisible: false, borderColor: "#2a2e39", visible: false },
-    rightPriceScale: { borderColor: "#2a2e39" },
-    handleScale: { mouseWheel: false, pinch: false, axisPressedMouseMove: true },
-    handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
-  });
-  const cvdSeries = cvdChart.addSeries(LightweightCharts.CandlestickSeries, {
+  // ---- Indicator sub-panes (RSI, CVD) live INSIDE the main chart as native
+  // panes (lightweight-charts v5). Because they share the one time scale and the
+  // same right-axis layout, they stay pixel-aligned under the candles with zero
+  // lag — no manual time-scale or axis-width syncing needed (that frame-behind
+  // sync between separate charts was the "RSI lags behind" bug). Panes are
+  // positional, so we rebuild them in a fixed order (RSI above CVD) whenever
+  // either is toggled; data is cached so a rebuild repaints instantly.
+  const RSI_OPTS = { color: "#bb86fc", lineWidth: 1, priceLineVisible: false, lastValueVisible: true };
+  const CVD_OPTS = {
     upColor: "#26a69a", downColor: "#ef5350",
     borderUpColor: "#26a69a", borderDownColor: "#ef5350",
     wickUpColor: "#26a69a", wickDownColor: "#ef5350",
     priceLineVisible: false,
-  });
+  };
+  const SUBPANE_HEIGHT = 130;   // px height for each indicator pane
+  let rsiSeries = null, cvdSeries = null;
+  let rsiData = [], cvdData = [];
+  let rsiVisible = false, cvdVisible = false;
 
-  let _syncing = false;
+  const applyPaneHeights = () => {
+    try {
+      const panes = chart.panes();
+      for (let i = 1; i < panes.length; i++) panes[i].setHeight(SUBPANE_HEIGHT);
+    } catch (_) {}
+  };
+  const relayoutSubPanes = () => {
+    if (rsiSeries) { chart.removeSeries(rsiSeries); rsiSeries = null; }
+    if (cvdSeries) { chart.removeSeries(cvdSeries); cvdSeries = null; }
+    let idx = 1;
+    if (rsiVisible) {
+      rsiSeries = chart.addSeries(LightweightCharts.LineSeries, RSI_OPTS, idx++);
+      rsiSeries.setData(rsiData);
+    }
+    if (cvdVisible) {
+      cvdSeries = chart.addSeries(LightweightCharts.CandlestickSeries, CVD_OPTS, idx++);
+      cvdSeries.setData(cvdData);
+    }
+    applyPaneHeights();
+    requestAnimationFrame(applyPaneHeights);
+  };
+  const showRsi = (visible) => { if (visible !== rsiVisible) { rsiVisible = visible; relayoutSubPanes(); } };
+  const showCvd = (visible) => { if (visible !== cvdVisible) { cvdVisible = visible; relayoutSubPanes(); } };
+
   chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
-    if (!r || _syncing) return;
-    _syncing = true;
-    try { rsiChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
-    try { cvdChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
-    _syncing = false;
+    if (!r) return;
     scheduleVolProfileFetch();
     scheduleLiqFetch();
     scheduleFootprintFetch();
   });
-  // sub-pane visibility — sync time scale on show so the panes don't paint
-  // misaligned (they only resync via subscribeVisibleLogicalRangeChange when
-  // the user scrolls, hence the "jumps back into place" bug)
-  const syncSubPanes = () => {
-    const r = chart.timeScale().getVisibleLogicalRange();
-    if (!r) return;
-    try { rsiChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
-    try { cvdChart.timeScale().setVisibleLogicalRange(r); } catch (_) {}
-  };
-  const showPane = (el, visible, targetKey) => {
-    const handle = document.querySelector(`.pane-resize[data-target="${targetKey}"]`);
-    if (handle) handle.classList.toggle("hidden", !visible);
-    el.classList.toggle("visible", visible);
-    if (!visible) el.style.height = "";    // drop any drag-set height so re-show uses default
-    else requestAnimationFrame(syncSubPanes);
-  };
-  const showRsi = (visible) => showPane(rsiEl, visible, "rsi");
-  const showCvd = (visible) => showPane(cvdEl, visible, "cvd");
-  showRsi(false);
-  showCvd(false);
-
-  // wire the drag handles — pulling up enlarges the sub-pane. Uses pointer
-  // events so touch on Android/iOS works the same as mouse on desktop.
-  const wireResize = (targetKey, targetEl) => {
-    const handle = document.querySelector(`.pane-resize[data-target="${targetKey}"]`);
-    if (!handle) return;
-    handle.style.touchAction = "none";
-    handle.addEventListener("pointerdown", (e) => {
-      e.preventDefault();
-      handle.setPointerCapture?.(e.pointerId);
-      const startY = e.clientY;
-      const startH = targetEl.getBoundingClientRect().height;
-      const onMove = (ev) => {
-        const dy = startY - ev.clientY;          // dragging up = positive dy
-        const newH = Math.max(60, Math.min(window.innerHeight * 0.6, startH + dy));
-        targetEl.style.height = newH + "px";
-      };
-      const onUp = () => {
-        handle.removeEventListener("pointermove", onMove);
-        handle.removeEventListener("pointerup", onUp);
-        handle.removeEventListener("pointercancel", onUp);
-        document.body.style.cursor = "";
-      };
-      handle.addEventListener("pointermove", onMove);
-      handle.addEventListener("pointerup", onUp);
-      handle.addEventListener("pointercancel", onUp);
-      document.body.style.cursor = "ns-resize";
-    });
-  };
-  wireResize("rsi", rsiEl);
-  wireResize("cvd", cvdEl);
 
   // ---- Ctrl+Wheel zoom with locked price/bar ratio (TradingView-style)
   // Plain wheel is a no-op; Ctrl/Cmd+Wheel zooms time and price together,
@@ -239,7 +205,6 @@
     }
   };
   chartEl.addEventListener("wheel", wheelZoom, { passive: false });
-  rsiEl.addEventListener("wheel", wheelZoom, { passive: false });
 
   // Two-finger pinch zoom on touch — mirrors Ctrl+Wheel: both axes scale
   // together so candle shape stays constant. Single-finger pan stays in the
@@ -291,8 +256,6 @@
     el.addEventListener("pointerleave", onEnd, { capture: true });
   };
   wirePinch(chartEl);
-  wirePinch(rsiEl);
-  wirePinch(cvdEl);
 
   const emaSeries = {};
   const tradePriceLines = new Map();
@@ -360,15 +323,15 @@
       emaSeries[p].setData(computeEma(session.candles, p));
     }
     if (rsiSpec) {
-      rsiSeries.setData(computeRsi(session.candles, rsiSpec.period));
-      showRsi(true);
+      rsiData = computeRsi(session.candles, rsiSpec.period);
+      if (rsiVisible) rsiSeries.setData(rsiData); else showRsi(true);
     } else {
-      rsiSeries.setData([]);
+      rsiData = [];
       showRsi(false);
     }
     const wantCvd = indActive("cvd");
     if (wantCvd) { showCvd(true); fetchCvd(); }
-    else { showCvd(false); cvdSeries.setData([]); cvdLastCursor = null; }
+    else { showCvd(false); cvdData = []; cvdLastCursor = null; }
 
     const wantFootprint = indActive("footprint");
     setFootprintVisible(wantFootprint);
@@ -441,7 +404,8 @@
   let session = null;
   let playTimer = null;
   let loadAbort = null;          // AbortController for in-flight session load
-  let armedFor = null;          // "limit" | "sl" | "tp" | "hline" | "measure" | null
+  let armedFor = null;          // "limit" | "sl" | "tp" | "hline" | "measure" | "mlimit" | null
+  let pendingLimitSide = null;  // "long" | "short" while a mobile long-press limit is armed
   let liveWs = null;            // Binance WebSocket in live mode
 
   // drawings
@@ -1078,12 +1042,10 @@
     cvdAbort = new AbortController();
     try {
       const data = await api(`/api/session/${session.id}/cvd`, { signal: cvdAbort.signal });
-      cvdSeries.setData((data.points || []).map((p) => ({
+      cvdData = (data.points || []).map((p) => ({
         time: p.time, open: p.open, high: p.high, low: p.low, close: p.close,
-      })));
-      // setData on a sub-pane chart can reset its visible range — re-sync after
-      // it arrives so the CVD candles stay aligned under the price chart
-      syncSubPanes();
+      }));
+      if (cvdSeries) cvdSeries.setData(cvdData);
     } catch (err) {
       if (err.name !== "AbortError") setStatus(`cvd: ${err.message}`, true);
     }
@@ -1244,29 +1206,33 @@
       if (existing) {
         for (const line of existing.lines) candleSeries.removePriceLine(line);
       }
-      const lines = [];
+      // tag each line with its kind + price so the on-chart drag layer can
+      // hit-test it and commit the right field (sl/tp/limit) on release
+      const items = [];
+      const add = (kind, price, opts) =>
+        items.push({ kind, tradeId: t.id, price, line: candleSeries.createPriceLine(opts) });
       if (t.status === "pending" && t.limit_price != null) {
-        lines.push(candleSeries.createPriceLine({
+        add("limit", t.limit_price, {
           price: t.limit_price,
           color: t.side === "long" ? "#80cbc4" : "#ef9a9a",
           lineStyle: 1, lineWidth: 1, axisLabelVisible: true,
           title: `LIMIT ${t.side[0].toUpperCase()} ${t.qty}`,
-        }));
+        });
       } else if (t.entry_price != null) {
-        lines.push(candleSeries.createPriceLine({
+        add("entry", t.entry_price, {
           price: t.entry_price,
           color: t.side === "long" ? "#26a69a" : "#ef5350",
           lineStyle: 0, lineWidth: 1, axisLabelVisible: true,
           title: `${t.side[0].toUpperCase()} ${t.qty}`,
-        }));
+        });
       }
-      if (t.sl != null) lines.push(candleSeries.createPriceLine({
+      if (t.sl != null) add("sl", t.sl, {
         price: t.sl, color: "#ef5350", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "SL",
-      }));
-      if (t.tp != null) lines.push(candleSeries.createPriceLine({
+      });
+      if (t.tp != null) add("tp", t.tp, {
         price: t.tp, color: "#26a69a", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "TP",
-      }));
-      tradePriceLines.set(t.id, { lines, fp });
+      });
+      tradePriceLines.set(t.id, { lines: items.map((it) => it.line), items, fp });
     }
     for (const [id, entry] of tradePriceLines) {
       if (wantIds.has(id)) continue;
@@ -1325,6 +1291,7 @@
     // in live mode there's always a current price (from WS), so trading stays enabled
     const tradingDisabled = !session.is_live && atEnd;
     $("#mark-info").textContent = `Mark: ${session.current_price.toFixed(4)}`;
+    updateBarPrice(session.current_price);
     $("#back-1").disabled = session.cursor <= 0;
     $("#next-1").disabled = atEnd;
     $("#play").disabled = atEnd;
@@ -1335,7 +1302,6 @@
     if (isNew) {
       // re-enable auto-scale on the price axis so it follows the new data's price range
       resetZoomLock();
-      rsiChart.priceScale("right").applyOptions({ autoScale: true });
       const n = session.candles.length;   // warmup candles + cursor candle
       // when many candles are loaded, show only the most recent INITIAL_VISIBLE_BARS
       // so each bar stays readable; user can zoom out to reveal older history
@@ -1385,7 +1351,7 @@
     setVolumeProfileVisible(false);
     setFootprintVisible(false);
     liquidationMarkers.setMarkers([]); liqEvents = []; liqLastKey = null;
-    cvdSeries.setData([]); showCvd(false); cvdLastCursor = null;
+    cvdData = []; showCvd(false); cvdLastCursor = null;
     tapeLastCursorTime = null;
     tapeBuffer = [];
     resetTickReplay();
@@ -1401,7 +1367,7 @@
       chart.removeSeries(emaSeries[p]);
       delete emaSeries[p];
     }
-    rsiSeries.setData([]);
+    rsiData = [];
     showRsi(false);
     // reset trade form back to market order
     $("#t-type").value = "market";
@@ -1536,6 +1502,7 @@
     session.current_time = candle.time;
     session.current_price = candle.close;
     $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
+    updateBarPrice(candle.close);
     // refresh open-position P&L against the new live price
     if (session.trades.some((t) => t.status === "open")) renderTrades();
     // when the kline closes, tell the backend so indicator endpoints can extend
@@ -1862,6 +1829,21 @@
     } catch (err) { setStatus(err.message, true); }
   };
 
+  // Core trade POST shared by the desktop form (placeTrade) and the mobile
+  // Sell/Lots/Buy bar + drag-to-limit gesture. Throws on backend rejection.
+  const submitTrade = async ({ side, qty, orderType = "market", limitPrice = null, sl = null, tp = null }) => {
+    const data = await api(`/api/session/${session.id}/trade`, {
+      method: "POST",
+      body: JSON.stringify({
+        side, qty, order_type: orderType, limit_price: limitPrice, sl, tp,
+        at_price: session.is_live ? session.current_price : null,
+        at_time: session.is_live ? Math.floor(Date.now() / 1000) : null,
+      }),
+    });
+    applySession(data);
+    return data;
+  };
+
   const placeTrade = async (side) => {
     if (!session) return;
     // pause autoplay so the cursor can't advance between the user's click
@@ -1901,15 +1883,7 @@
     if (tpPct != null) tp = side === "long" ? refPrice * (1 + tpPct / 100) : refPrice * (1 - tpPct / 100);
 
     try {
-      const data = await api(`/api/session/${session.id}/trade`, {
-        method: "POST",
-        body: JSON.stringify({
-          side, qty, order_type: orderType, limit_price: limitPrice, sl, tp,
-          at_price: session.is_live ? session.current_price : null,
-          at_time: session.is_live ? Math.floor(Date.now() / 1000) : null,
-        }),
-      });
-      applySession(data);
+      const data = await submitTrade({ side, qty, orderType, limitPrice, sl, tp });
       setStatus(orderType === "limit"
         ? `${side} LIMIT @ ${limitPrice.toFixed(4)} pending`
         : `opened ${side} @ ${data.current_price.toFixed(4)}`);
@@ -2024,6 +1998,7 @@
   };
   const disarm = () => {
     armedFor = null;
+    pendingLimitSide = null;
     chartEl.classList.remove("armed");
     $("#cursor-tool").classList.add("active");      // back to resting cursor state
     document.querySelectorAll(".pick, .tool").forEach((b) => b.classList.remove("armed"));
@@ -2050,6 +2025,9 @@
 
   const HLINE_DEFAULT_COLOR = "#90caf9";
   const HLINE_HIT_PX = 6;               // pixel tolerance for grabbing a line
+  // on-chart order editing (drag SL/TP/limit lines) is a mobile-only affordance;
+  // desktop keeps the form. Re-evaluated on each use so it tracks viewport changes.
+  const mq = window.matchMedia("(max-width: 900px)");
 
   const hlineTitle = (price) => `H ${price.toFixed(getPrecision(price))}`;
   // Apply a partial change to a line and keep its PriceLine + axis label in sync.
@@ -2106,10 +2084,47 @@
   // PriceLine has no built-in drag, so we hit-test mouse events against each
   // line's pixel position. A drag repositions the price; a click (no drag)
   // opens the style popup.
-  const hlineAt = (y) => {
+  // A drag target abstracts an h-line or a trade level behind apply (live drag) /
+  // commit (persist) / click (tap → popup). H-lines commit locally; trade lines
+  // POST /modify with the single changed field.
+  const tradeLineTarget = (it) => ({
+    apply: it.kind === "entry" ? null
+      : (price) => { it.price = price; it.line.applyOptions({ price }); },
+    commit: it.kind === "entry" ? null
+      : async (price) => {
+        const patch = it.kind === "sl" ? { sl: price }
+                    : it.kind === "tp" ? { tp: price } : { limit_price: price };
+        try {
+          const data = await api(`/api/session/${session.id}/trade/${it.tradeId}/modify`, {
+            method: "POST", body: JSON.stringify(patch),
+          });
+          applySession(data);
+        } catch (err) {
+          setStatus(err.message, true);
+          if (session) applySession(session);   // re-render snaps the line back
+        }
+      },
+    click: (evt) => openOrderPopup(it.tradeId, it.kind, evt),
+  });
+  const draggableAt = (y, tol = HLINE_HIT_PX) => {
     for (let i = hlines.length - 1; i >= 0; i--) {
-      const ly = candleSeries.priceToCoordinate(hlines[i].price);
-      if (ly != null && Math.abs(ly - y) <= HLINE_HIT_PX) return hlines[i];
+      const h = hlines[i];
+      const ly = candleSeries.priceToCoordinate(h.price);
+      if (ly != null && Math.abs(ly - y) <= tol) {
+        return {
+          apply: (price) => updateHline(h, { price }),
+          commit: null,
+          click: (evt) => openHlinePopup(h, evt),
+        };
+      }
+    }
+    if (session) {                   // trade SL/TP/limit lines: draggable + tappable
+      for (const entry of tradePriceLines.values()) {
+        for (const it of entry.items) {
+          const ly = candleSeries.priceToCoordinate(it.price);
+          if (ly != null && Math.abs(ly - y) <= tol) return tradeLineTarget(it);
+        }
+      }
     }
     return null;
   };
@@ -2168,39 +2183,158 @@
     hlinePopupEl = pop;
   };
 
-  // grab a line on mousedown (capture phase, before the chart starts panning)
-  chartEl.addEventListener("mousedown", (e) => {
-    if (armedFor || e.button !== 0) return;     // placing a tool — let click handler run
+  // Tap an order line (mobile) → compact popup: edit qty, add a missing SL/TP at
+  // a default offset (then drag it), or close/cancel the trade. Reuses the
+  // .hline-popup container (so only one floating popup is ever open).
+  // price of an SL/TP that sits `pct` away from `ref`, on the correct side
+  const levelFromPct = (side, kind, ref, pct) => {
+    const up = (kind === "tp") === (side === "long");   // tp-long or sl-short → above
+    return up ? ref * (1 + pct / 100) : ref * (1 - pct / 100);
+  };
+  // close (X) icon — used for the popup's remove-SL/TP and close/cancel-order action
+  const CLOSE_X_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  const openOrderPopup = (tid, kind, evt) => {
+    closeHlinePopup();
+    const t = session?.trades.find((x) => x.id === tid);
+    if (!t) return;
+    const ref = t.status === "pending" ? t.limit_price : t.entry_price;
+    if (ref == null) return;
+    const stack = $(".chart-stack");
+    const rect = stack.getBoundingClientRect();
+    const pop = document.createElement("div");
+    pop.className = "hline-popup order-popup";
+    const x = evt ? evt.clientX - rect.left : 80;
+    const anchorPrice = kind === "sl" ? t.sl : kind === "tp" ? t.tp : ref;
+    const ly = candleSeries.priceToCoordinate(anchorPrice ?? ref) ?? 40;
+    // provisional left; re-clamped after append using the real width so the
+    // popup (and its trailing close icon) never overflows the chart's right edge
+    pop.style.left = `${Math.max(8, x - 96)}px`;
+    pop.style.top = `${Math.max(8, ly - 46)}px`;
+
+    const modify = async (patch) => {
+      try {
+        const data = await api(`/api/session/${session.id}/trade/${tid}/modify`, {
+          method: "POST", body: JSON.stringify(patch),
+        });
+        applySession(data);
+      } catch (err) { setStatus(err.message, true); }
+    };
+
+    if (kind === "sl" || kind === "tp") {
+      // edit just this level: change its % distance from entry, or remove it
+      const level = kind === "sl" ? t.sl : t.tp;
+      const pct = level != null ? Math.abs((level - ref) / ref) * 100 : 1;
+      const wrap = document.createElement("label");
+      wrap.className = "op-qty"; wrap.textContent = `${kind.toUpperCase()} %`;
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.step = "0.01"; inp.min = "0"; inp.value = pct.toFixed(2);
+      inp.addEventListener("change", () => {
+        const p = parseFloat(inp.value);
+        if (p > 0) modify({ [kind]: levelFromPct(t.side, kind, ref, p) });
+      });
+      wrap.appendChild(inp);
+      const rm = document.createElement("button");
+      rm.type = "button"; rm.className = "op-btn op-close op-icon";
+      rm.title = `Remove ${kind.toUpperCase()}`; rm.setAttribute("aria-label", rm.title);
+      rm.innerHTML = CLOSE_X_SVG;
+      rm.addEventListener("click", () => {
+        modify(kind === "sl" ? { clear_sl: true } : { clear_tp: true });
+        closeHlinePopup();
+      });
+      pop.append(wrap, rm);
+    } else {
+      // entry / limit line: trade-level actions (qty, add missing SL/TP, close)
+      const qtyWrap = document.createElement("label");
+      qtyWrap.className = "op-qty"; qtyWrap.textContent = "Qty";
+      const qty = document.createElement("input");
+      qty.type = "number"; qty.step = "any"; qty.min = "0"; qty.value = String(t.qty);
+      qty.addEventListener("change", () => {
+        const v = parseFloat(qty.value);
+        if (v > 0) modify({ qty: v });
+      });
+      qtyWrap.appendChild(qty);
+      pop.appendChild(qtyWrap);
+
+      if (t.sl == null) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "op-btn"; b.textContent = "+SL";
+        b.addEventListener("click", () => { modify({ sl: levelFromPct(t.side, "sl", ref, 1) }); closeHlinePopup(); });
+        pop.appendChild(b);
+      }
+      if (t.tp == null) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "op-btn"; b.textContent = "+TP";
+        b.addEventListener("click", () => { modify({ tp: levelFromPct(t.side, "tp", ref, 1) }); closeHlinePopup(); });
+        pop.appendChild(b);
+      }
+      const close = document.createElement("button");
+      close.type = "button"; close.className = "op-btn op-close op-icon";
+      close.title = t.status === "pending" ? "Cancel order" : "Close trade";
+      close.setAttribute("aria-label", close.title);
+      close.innerHTML = CLOSE_X_SVG;
+      close.addEventListener("click", () => { closeTrade(tid); closeHlinePopup(); });
+      pop.appendChild(close);
+    }
+
+    stack.appendChild(pop);
+    // now that it has a real width, keep it fully on-screen (the trailing close
+    // icon was clipping off the right edge on narrow / mobile viewports)
+    const w = pop.offsetWidth;
+    pop.style.left = `${Math.max(8, Math.min(x - w / 2, rect.width - w - 8))}px`;
+    hlinePopupEl = pop;
+  };
+
+  // grab a line on pointerdown (capture phase, before the chart starts panning).
+  // Pointer events cover mouse + touch, so on-chart dragging works on mobile too.
+  chartEl.addEventListener("pointerdown", (e) => {
+    if (armedFor || e.button > 0) return;       // placing a tool — let click handler run
+    const tol = e.pointerType && e.pointerType !== "mouse" ? 12 : HLINE_HIT_PX;
     const rect = chartEl.getBoundingClientRect();
-    const h = hlineAt(e.clientY - rect.top);
-    if (!h) return;
-    hlineDrag = { h, startY: e.clientY, moved: false };
+    const target = draggableAt(e.clientY - rect.top, tol);
+    if (!target) return;
+    hlineDrag = { target, startY: e.clientY, moved: false, pointerId: e.pointerId };
     chartEl.classList.add("hline-hover");
+    chartEl.style.touchAction = "none";         // suppress chart pan during the drag
+    setChartPan(false);                         // and stop LWC's own pan (mouse + touch)
+    try { chartEl.setPointerCapture(e.pointerId); } catch (_) {}
     e.preventDefault();
     e.stopPropagation();
   }, true);
-  window.addEventListener("mousemove", (e) => {
-    if (!hlineDrag) return;
+  chartEl.addEventListener("pointermove", (e) => {
+    if (!hlineDrag || e.pointerId !== hlineDrag.pointerId) return;
     if (Math.abs(e.clientY - hlineDrag.startY) > 3) hlineDrag.moved = true;
+    if (!hlineDrag.target.apply) return;        // non-draggable (e.g. entry line)
     const rect = chartEl.getBoundingClientRect();
     const price = candleSeries.coordinateToPrice(e.clientY - rect.top);
-    if (price != null && isFinite(price)) updateHline(hlineDrag.h, { price });
+    if (price != null && isFinite(price)) hlineDrag.target.apply(price);
   });
-  window.addEventListener("mouseup", (e) => {
-    if (!hlineDrag) return;
-    const { h, moved } = hlineDrag;
+  const endLineDrag = (e) => {
+    if (!hlineDrag || e.pointerId !== hlineDrag.pointerId) return;
+    const { target, moved } = hlineDrag;
     hlineDrag = null;
-    if (!moved) openHlinePopup(h, e);    // a click, not a drag → style popup
-  });
-  // row-resize cursor when hovering over a line (and not arming/dragging)
-  chartEl.addEventListener("mousemove", (e) => {
-    if (hlineDrag) return;
+    chartEl.style.touchAction = "";
+    setChartPan(true);                          // restore chart pan/scale
+    chartEl.classList.remove("hline-hover");
+    try { chartEl.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (moved && target.commit) {
+      const rect = chartEl.getBoundingClientRect();
+      const price = candleSeries.coordinateToPrice(e.clientY - rect.top);
+      if (price != null && isFinite(price)) target.commit(price);
+    } else if (!moved && target.click) {
+      target.click(e);                          // a tap, not a drag → popup
+    }
+  };
+  chartEl.addEventListener("pointerup", endLineDrag);
+  chartEl.addEventListener("pointercancel", endLineDrag);
+  // row-resize cursor when hovering over a grabbable line (mouse only; no hover on touch)
+  chartEl.addEventListener("pointermove", (e) => {
+    if (hlineDrag || e.pointerType !== "mouse") return;
     if (armedFor) { chartEl.classList.remove("hline-hover"); return; }
     const rect = chartEl.getBoundingClientRect();
-    chartEl.classList.toggle("hline-hover", !!hlineAt(e.clientY - rect.top));
+    chartEl.classList.toggle("hline-hover", !!draggableAt(e.clientY - rect.top));
   });
-  // dismiss the popup when clicking anywhere outside it
-  document.addEventListener("mousedown", (e) => {
+  // dismiss the popup when tapping/clicking anywhere outside it
+  document.addEventListener("pointerdown", (e) => {
     if (hlinePopupEl && !hlinePopupEl.contains(e.target)) closeHlinePopup();
   }, true);
 
@@ -2239,7 +2373,12 @@
     if (price == null || !isFinite(price)) return;
     const time = param.time;
 
-    if (armedFor === "limit") {
+    if (armedFor === "mlimit") {
+      // mobile long-press → tap: place a limit at the tapped price
+      const side = pendingLimitSide;
+      disarm();
+      if (side) mobileLimitOrder(side, price);
+    } else if (armedFor === "limit") {
       $("#t-type").value = "limit";
       $("#t-type").dispatchEvent(new Event("change"));
       $("#t-limit").value = price.toFixed(getPrecision(price));
@@ -2281,6 +2420,7 @@
   const refreshModeUI = () => {
     const live = modeSelect.value === "live";
     document.body.classList.toggle("live-mode", live);
+    document.body.classList.toggle("replay-mode", !live);   // gates the date picker
     $("#live-indicator").style.display = live ? "" : "none";
   };
   modeSelect.addEventListener("change", () => {
@@ -2311,6 +2451,114 @@
   $("#play").addEventListener("click", () => (isPlaying() ? stopPlay() : startPlay()));
   $("#long-btn").addEventListener("click", () => placeTrade("long"));
   $("#short-btn").addEventListener("click", () => placeTrade("short"));
+
+  // ---- Mobile order bar: tap Buy/Sell = market; drag onto the chart or
+  //      long-press then tap = limit. SL/TP chips attach default-offset levels.
+  const updateBarPrice = (px) => {
+    if (px == null) return;
+    const txt = px.toFixed(getPrecision(px));
+    const b = $("#m-buy-price"), s = $("#m-sell-price");
+    if (b) b.textContent = txt;
+    if (s) s.textContent = txt;
+  };
+  const mLotsVal = () => {
+    const v = parseFloat($("#m-lots")?.value);
+    return v > 0 ? v : null;
+  };
+  const chipOn = (id) => $(id)?.getAttribute("aria-pressed") === "true";
+  const pctField = (id, fallback) => { const v = parseFloat($(id)?.value); return v > 0 ? v : fallback; };
+  const defaultLevels = (side, ref) => ({
+    sl: chipOn("#m-use-sl") ? levelFromPct(side, "sl", ref, pctField("#m-sl-pct", 1)) : null,
+    tp: chipOn("#m-use-tp") ? levelFromPct(side, "tp", ref, pctField("#m-tp-pct", 1)) : null,
+  });
+  const toggleChip = (btn) =>
+    btn.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") === "true" ? "false" : "true");
+  $("#m-use-sl")?.addEventListener("click", () => toggleChip($("#m-use-sl")));
+  $("#m-use-tp")?.addEventListener("click", () => toggleChip($("#m-use-tp")));
+
+  const mobileMarketOrder = async (side) => {
+    if (!session) return;
+    const qty = mLotsVal();
+    if (qty == null) { setStatus("lots must be > 0", true); return; }
+    if (playTimer) stopPlay();
+    const { sl, tp } = defaultLevels(side, session.current_price);
+    try {
+      await submitTrade({ side, qty, sl, tp });
+      setStatus(`opened ${side} @ ${session.current_price.toFixed(getPrecision(session.current_price))}`);
+    } catch (err) { setStatus(err.message, true); }
+  };
+  const mobileLimitOrder = async (side, price) => {
+    if (!session) return;
+    const qty = mLotsVal();
+    if (qty == null) { setStatus("lots must be > 0", true); return; }
+    if (playTimer) stopPlay();
+    const { sl, tp } = defaultLevels(side, price);
+    try {
+      await submitTrade({ side, qty, orderType: "limit", limitPrice: price, sl, tp });
+      setStatus(`${side} LIMIT @ ${price.toFixed(getPrecision(price))} pending`);
+    } catch (err) { setStatus(err.message, true); }
+  };
+
+  const LONG_PRESS_MS = 500;
+  const clearLimitGhost = () => { const g = $("#limit-ghost"); if (g) g.remove(); };
+  const updateLimitGhost = (side, clientY) => {
+    const cr = chartEl.getBoundingClientRect();
+    if (clientY < cr.top || clientY > cr.bottom) { clearLimitGhost(); return; }
+    const stack = $(".chart-stack");
+    const price = candleSeries.coordinateToPrice(clientY - cr.top);
+    let g = $("#limit-ghost");
+    if (!g) { g = document.createElement("div"); g.id = "limit-ghost"; stack.appendChild(g); }
+    g.style.top = `${clientY - stack.getBoundingClientRect().top}px`;
+    g.style.borderTopColor = side === "long" ? "#80cbc4" : "#ef9a9a";
+    if (price != null && isFinite(price)) g.dataset.price = price.toFixed(getPrecision(price));
+  };
+  const wireSideButton = (btn, side) => {
+    if (!btn) return;
+    btn.style.touchAction = "none";
+    let st = null;     // { id, startX, startY, moved, lp, armedByHold }
+    btn.addEventListener("pointerdown", (e) => {
+      if (e.button > 0 || !session) return;
+      st = { id: e.pointerId, startX: e.clientX, startY: e.clientY, moved: false, armedByHold: false };
+      try { btn.setPointerCapture(e.pointerId); } catch (_) {}
+      st.lp = setTimeout(() => {
+        if (!st || st.moved) return;
+        st.armedByHold = true;                 // long-press → arm a chart tap for the limit
+        pendingLimitSide = side;
+        armedFor = "mlimit";
+        chartEl.classList.add("armed");
+        const hint = $("#arm-hint");
+        hint.textContent = `tap chart to place ${side.toUpperCase()} limit · esc to cancel`;
+        hint.style.display = "";
+      }, LONG_PRESS_MS);
+    });
+    btn.addEventListener("pointermove", (e) => {
+      if (!st || e.pointerId !== st.id) return;
+      if (Math.abs(e.clientX - st.startX) > 6 || Math.abs(e.clientY - st.startY) > 6) st.moved = true;
+      if (st.moved && !st.armedByHold) { clearTimeout(st.lp); updateLimitGhost(side, e.clientY); }
+    });
+    const finish = (e) => {
+      if (!st || e.pointerId !== st.id) return;
+      clearTimeout(st.lp);
+      try { btn.releasePointerCapture(e.pointerId); } catch (_) {}
+      const { moved, armedByHold } = st;
+      st = null;
+      clearLimitGhost();
+      if (armedByHold) return;                  // long-press path: chart tap places it
+      const cr = chartEl.getBoundingClientRect();
+      const overChart = e.clientX >= cr.left && e.clientX <= cr.right
+                     && e.clientY >= cr.top && e.clientY <= cr.bottom;
+      if (moved && overChart) {
+        const price = candleSeries.coordinateToPrice(e.clientY - cr.top);
+        if (price != null && isFinite(price)) mobileLimitOrder(side, price);
+      } else if (!moved) {
+        mobileMarketOrder(side);                // plain tap → market
+      }
+    };
+    btn.addEventListener("pointerup", finish);
+    btn.addEventListener("pointercancel", finish);
+  };
+  wireSideButton($("#m-buy"), "long");
+  wireSideButton($("#m-sell"), "short");
   document.querySelectorAll(".ind").forEach((btn) => {
     btn.addEventListener("click", () => {
       btn.classList.toggle("active");

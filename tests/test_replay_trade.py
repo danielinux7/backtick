@@ -5,6 +5,7 @@ no SessionStore — and exercise process_candle (limit fills + SL/TP) plus the
 snapshot round-trip.
 """
 import pandas as pd
+import pytest
 
 from backend.replay import Session, Trade
 
@@ -208,6 +209,72 @@ def test_step_back_tick_crosses_into_previous_candle_ticks(monkeypatch):
     assert s.cursor == 0
     assert s.tick_idx == 2                      # 4 revealed then rewound by 2
     assert s.current_price() == 101.0           # price of the 2nd revealed tick
+
+
+# --- modify_trade: on-chart order editing ----------------------------------
+
+def test_modify_open_trade_sl_tp_qty():
+    t = open_trade("long", 100.0, sl=90.0, tp=110.0)
+    t.status = "open"; t.entry_price = 100.0
+    s = make_session(100, 110, 90, 105, [t])
+
+    s.modify_trade(t.id, sl=95.0, tp=120.0, qty=3.0)
+
+    assert (t.sl, t.tp, t.qty) == (95.0, 120.0, 3.0)
+
+
+def test_modify_only_patches_given_fields():
+    t = open_trade("long", 100.0, sl=90.0, tp=110.0)
+    t.status = "open"; t.entry_price = 100.0
+    s = make_session(100, 110, 90, 105, [t])
+
+    s.modify_trade(t.id, sl=92.0)            # tp/qty untouched
+
+    assert t.sl == 92.0 and t.tp == 110.0 and t.qty == 2.0
+
+
+def test_modify_pending_limit_price():
+    t = Trade(id="p1", side="long", qty=1.0, order_type="limit",
+              created_time=0, status="pending", limit_price=90.0)
+    s = make_session(100, 110, 90, 100, [t])   # market (close) = 100
+
+    s.modify_trade(t.id, limit_price=95.0)
+
+    assert t.limit_price == 95.0
+
+
+def test_modify_rejects_limit_on_open_trade():
+    t = open_trade("long", 100.0)
+    t.status = "open"; t.entry_price = 100.0
+    s = make_session(100, 110, 90, 105, [t])
+
+    with pytest.raises(ValueError):
+        s.modify_trade(t.id, limit_price=95.0)
+
+
+def test_modify_rejects_long_sl_above_entry():
+    t = open_trade("long", 100.0)
+    t.status = "open"; t.entry_price = 100.0
+    s = make_session(100, 110, 90, 105, [t])
+
+    with pytest.raises(ValueError):
+        s.modify_trade(t.id, sl=105.0)         # SL must be below entry for long
+
+
+def test_modify_clear_sl_removes_only_that_level():
+    t = open_trade("long", 100.0, sl=90.0, tp=110.0)
+    t.status = "open"; t.entry_price = 100.0
+    s = make_session(100, 110, 90, 105, [t])
+
+    s.modify_trade(t.id, clear_sl=True)
+
+    assert t.sl is None and t.tp == 110.0   # TP untouched
+
+
+def test_modify_unknown_trade_raises_keyerror():
+    s = make_session(100, 110, 90, 105, [])
+    with pytest.raises(KeyError):
+        s.modify_trade("nope", sl=95.0)
 
 
 # --- snapshot round-trip ---------------------------------------------------
