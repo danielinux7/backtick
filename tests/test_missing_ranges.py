@@ -3,10 +3,46 @@
 Pure function, no network. tf_ms = 60_000 (1m) throughout; timestamps are ms.
 """
 import numpy as np
+import pytest
 
-from backend.binance import _missing_ranges
+from backend.binance import UnknownSymbolError, _fetch_chunk, _missing_ranges
 
 TF = 60_000
+
+
+class _FakeResp:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")  # mimics httpx on non-400
+
+    def json(self):
+        return []
+
+
+class _FakeClient:
+    def __init__(self, status_code):
+        self._status = status_code
+
+    def get(self, *_a, **_k):
+        return _FakeResp(self._status)
+
+
+def test_fetch_chunk_400_is_unknown_symbol():
+    # Binance answers 400 for an unknown/invalid symbol — surface a clean,
+    # caller-mappable UnknownSymbolError (→ 400 "unknown symbol"), not a generic
+    # fetch failure (→ 502) whose URL would get mislabeled downstream.
+    with pytest.raises(UnknownSymbolError):
+        _fetch_chunk(_FakeClient(400), "spot", "ZZZZUSDT", "4h", 0, TF)
+
+
+def test_fetch_chunk_other_error_is_not_unknown_symbol():
+    # A transient failure (e.g. 429/5xx) must NOT be treated as a bad symbol.
+    with pytest.raises(Exception) as ei:
+        _fetch_chunk(_FakeClient(429), "spot", "BTCUSDT", "4h", 0, TF)
+    assert not isinstance(ei.value, UnknownSymbolError)
 
 
 def _ms(*minutes):
