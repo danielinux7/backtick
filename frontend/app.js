@@ -435,6 +435,9 @@
   let armedFor = null;          // "limit" | "sl" | "tp" | "hline" | "measure" | "mlimit" | null
   let pendingLimitSide = null;  // "long" | "short" while a mobile long-press limit is armed
   let liveWs = null;            // Binance WebSocket in live mode
+  let liveSeedAbort = null;     // aborts the in-flight forming-candle seed on disconnect/switch
+  let suppressClientSave = false;  // gate client_state writes during programmatic reset/restore
+  let clientSaveTimer = null;
 
   // drawings
   const hlines = [];                   // [{ id, line, price, color, width, style }]
@@ -596,7 +599,12 @@
     slot.appendChild(menu);
   }
   renderUserInfo();
-  window.addEventListener("auth:changed", () => renderUserInfo());
+  window.addEventListener("auth:changed", async () => {
+    renderUserInfo();
+    // Login/logout swaps identity → show this account's own most-recent saved
+    // session (or the default if it has none), discarding the guest chart.
+    if (!(await restoreLatest())) loadSession();
+  });
   window.addEventListener("install:available", () => renderUserInfo());
 
   // ---- Volume profile (aggTrade-bucketed, with buy/sell split per level)
@@ -1315,11 +1323,20 @@
       `<span>${wins}W / ${losses}L (${winRate}%)</span>`;
   };
 
-  const applySession = (data, isNew = false) => {
+  // `opts` is either the legacy `isNew` boolean or an options object.
+  // keepCandles: skip the candle re-`setData` (and indicator recompute) when
+  // only trades changed — placing/closing an order shouldn't wipe & rebuild the
+  // candle series (visible flicker), and in live mode re-setting the backend's
+  // candles would revert the WS-updated forming candle (the "lag").
+  const applySession = (data, opts = false) => {
+    const isNew = opts === true || !!(opts && opts.isNew);
+    const keepCandles = !!(opts && opts.keepCandles);
     session = data;
-    if (!isNew && session.in_tick) renderTickChart();
-    else candleSeries.setData(session.candles);
-    renderIndicators();
+    if (!keepCandles) {
+      if (!isNew && session.in_tick) renderTickChart();
+      else candleSeries.setData(session.candles);
+      renderIndicators();
+    }
     renderTrades();
     fetchTape();
     const atEnd = session.cursor >= session.total - 1;
@@ -1370,6 +1387,9 @@
   };
 
   const resetForNewSession = ({ preserveHlines = false, preserveTrades = false } = {}) => {
+    // clearing drawings here is teardown, not a user edit — don't let it write
+    // back over the (old) session's client_state
+    suppressClientSave = true;
     stopPlay();
     disarm();
     closeLiveStream();
@@ -1409,6 +1429,7 @@
     $("#t-type").dispatchEvent(new Event("change"));
     $("#t-limit").value = "";
     session = null;
+    suppressClientSave = false;
   };
 
   // ---- Infinite history backfill: when the user pans/zooms near the leftmost
@@ -1460,12 +1481,14 @@
   let liveTickBuffer = [];
   let livePushTimer = null;
   let liveLastKlineTime = null;       // open time (s) of most recently CLOSED kline we've pushed
+  let liveForming = null;             // forming candle {time,open,high,low,close,volume}; ticks refine it between kline frames
 
   const stopLivePush = () => {
     if (livePushTimer) clearInterval(livePushTimer);
     livePushTimer = null;
     liveTickBuffer = [];
     liveLastKlineTime = null;
+    liveForming = null;
   };
 
   const refreshActiveIndicators = () => {
@@ -1516,6 +1539,7 @@
 
   const closeLiveStream = () => {
     stopLivePush();
+    if (liveSeedAbort) { try { liveSeedAbort.abort(); } catch (_) {} liveSeedAbort = null; }
     if (liveWs) {
       try { liveWs.close(); } catch (_) {}
       liveWs = null;
@@ -1534,6 +1558,10 @@
       volume: parseFloat(k.v),
     };
     candleSeries.update(candle);
+    // Track the forming candle so aggTrade ticks can refine it between kline
+    // frames (below). Once it closes, drop it — the next kline frame seeds the
+    // new bucket; we don't invent a candle ahead of Binance.
+    liveForming = k.x === true ? null : candle;
     session.current_time = candle.time;
     session.current_price = candle.close;
     $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
@@ -1566,6 +1594,24 @@
     tapeBuffer.push(tick);
     if (tapeBuffer.length > TAPE_CAP) tapeBuffer = tapeBuffer.slice(-TAPE_CAP);
     renderTape();
+    // Glide the forming candle with each tick so it tracks live price instead
+    // of only jumping on kline frames. Only while the tick belongs to the
+    // current forming bucket; a new bucket waits for the next kline frame.
+    // These updates are cheap (one bar + the price labels); open-position P&L
+    // still refreshes on the ~1/s kline frames to avoid per-tick renderTrades.
+    if (liveForming && session) {
+      const tfSec = TF_SECONDS[session.tf];
+      const bucket = Math.floor((a.T / 1000) / tfSec) * tfSec;
+      if (bucket === liveForming.time) {
+        liveForming.close = tick.price;
+        if (tick.price > liveForming.high) liveForming.high = tick.price;
+        if (tick.price < liveForming.low) liveForming.low = tick.price;
+        candleSeries.update(liveForming);
+        session.current_price = tick.price;
+        $("#mark-info").textContent = `Mark: ${tick.price.toFixed(4)}`;
+        updateBarPrice(tick.price);
+      }
+    }
     // buffer for periodic push to backend (powers live indicators)
     liveTickBuffer.push({
       time_ms: a.T,
@@ -1573,6 +1619,38 @@
       qty: parseFloat(a.q),
       is_buyer_maker: a.m,
     });
+  };
+
+  // Seed the in-progress (forming) candle immediately on (re)connect so a
+  // restored live session doesn't show a blank last bar until the first WS
+  // frame arrives. Binance REST klines are CORS-enabled; failure is non-fatal
+  // (the WS repaints the forming candle within ~1s regardless).
+  const seedFormingCandle = async (sess) => {
+    try {
+      const apiBase = sess.market === "futures" ? "https://fapi.binance.com" : "https://api.binance.com";
+      const path = sess.market === "futures" ? "/fapi/v1/klines" : "/api/v3/klines";
+      liveSeedAbort = new AbortController();
+      const r = await fetch(`${apiBase}${path}?symbol=${encodeURIComponent(sess.symbol)}&interval=${sess.tf}&limit=1`,
+        { signal: liveSeedAbort.signal });
+      if (!r.ok) return;
+      const arr = await r.json();
+      const k = Array.isArray(arr) && arr[arr.length - 1];
+      if (!k) return;
+      if (!session || !session.is_live || session.id !== sess.id) return;   // session changed meanwhile
+      const candle = {
+        time: Math.floor(k[0] / 1000),
+        open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
+      };
+      // never feed a bar older than what's already plotted (LWC would throw)
+      const candles = session.candles || [];
+      const lastT = candles.length ? candles[candles.length - 1].time : 0;
+      if (candle.time < lastT) return;
+      candleSeries.update(candle);
+      liveForming = candle;
+      session.current_price = candle.close;
+      $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
+      updateBarPrice(candle.close);
+    } catch (_) { /* non-fatal */ }
   };
 
   const connectLiveStream = (sess) => {
@@ -1584,6 +1662,7 @@
     const url = `${base}/stream?streams=${sym}@kline_${sess.tf}/${sym}@aggTrade`;
     liveWs = new WebSocket(url);
     startLivePush();
+    seedFormingCandle(sess);   // fill the forming candle now; don't wait for first WS frame
     liveWs.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch (_) { return; }
@@ -1675,6 +1754,140 @@
       else if (/unknown symbol|invalid symbol/i.test(msg)) showFieldError(setupForm.symbol, "unknown symbol");
       else if (/no candles|no recent candles/i.test(msg)) showFieldError(setupForm.symbol, "no data");
       else setStatus(`couldn't load data: ${msg}`, true);
+    }
+  };
+
+  // Reflect a restored session back onto the setup form so the inputs match the
+  // chart (otherwise the next field edit would reload with stale symbol/tf).
+  // We set values directly and patch the custom-dropdown labels by hand —
+  // dispatching `change` would re-trigger autoLoad / the mode-select handler
+  // (which calls loadSession() ungated) and clobber the session we just loaded.
+  const syncDropdownLabel = (sel) => {
+    const wrap = sel && sel.closest(".dd");
+    if (!wrap) return;
+    const lbl = wrap.querySelector(".dd-label");
+    const opt = sel.options[sel.selectedIndex];
+    if (lbl && opt) lbl.textContent = opt.textContent;
+  };
+  const syncFormToSession = (data) => {
+    const sym = $("#symbol-input");
+    if (sym) sym.value = data.symbol;
+    const tf = $("#tf-select");
+    if (tf && Array.from(tf.options).some((o) => o.value === data.tf)) {
+      tf.value = data.tf; syncDropdownLabel(tf);
+    }
+    const mkt = setupForm.querySelector('select[name="market"]');
+    if (mkt) { mkt.value = data.market; syncDropdownLabel(mkt); }
+    modeSelect.value = data.is_live ? "live" : "replay";
+    syncDropdownLabel(modeSelect);
+    refreshModeUI();
+  };
+
+  // Restore the user's most-recent saved session — cursor position plus open,
+  // pending, and closed trades — so a reload or a login lands back on the last
+  // chart instead of a fresh default. Snapshots are keyed by user on the
+  // backend, so this also carries state across the guest→account transition.
+  // Returns true when a session was restored; false (no saved session, i.e.
+  // 204, or a fetch failure) tells the caller to fall back to loadSession().
+  const restoreLatest = async () => {
+    let r;
+    try {
+      r = await fetch("/api/session/latest", { credentials: "include" });
+    } catch (_) { return false; }
+    if (!r.ok || r.status === 204) return false;
+    let data;
+    try { data = await r.json(); } catch (_) { return false; }
+    if (!data || !data.id) return false;
+    resetForNewSession();              // drop any current chart/trades first
+    applySession(data, true);
+    syncFormToSession(data);
+    applyClientState(data.client_state);   // indicators, h-lines, measure, trade defaults
+    if (data.is_live) connectLiveStream(data);
+    setStatus("");
+    return true;
+  };
+
+  // ---- Per-session UI state (client_state): active indicators, h-lines,
+  // measure, and last-used lots/SL/TP. Captured into the session snapshot so a
+  // restored session comes back with the same chart setup. saveClientState is
+  // debounced and guarded by suppressClientSave so programmatic resets/restores
+  // don't write back; it also pins the session id so a stale debounced write
+  // can't land on a session we've since switched away from.
+  const collectTradeDefaults = () => ({
+    desktop: {
+      qty: $("#t-qty")?.value ?? "",
+      slOn: !!$("#use-sl")?.checked,
+      slPct: $("#t-sl-pct")?.value ?? "",
+      tpOn: !!$("#use-tp")?.checked,
+      tpPct: $("#t-tp-pct")?.value ?? "",
+    },
+    mobile: {
+      lots: $("#m-lots")?.value ?? "",
+      slOn: $("#m-use-sl")?.getAttribute("aria-pressed") === "true",
+      slPct: $("#m-sl-pct")?.value ?? "",
+      tpOn: $("#m-use-tp")?.getAttribute("aria-pressed") === "true",
+      tpPct: $("#m-tp-pct")?.value ?? "",
+    },
+  });
+  const collectClientState = () => ({
+    indicators: selectedIndicators(),
+    hlines: hlines.map((h) => ({ price: h.price, color: h.color, width: h.width, style: h.style })),
+    measure: measureBounds ? { s: { ...measureBounds.s }, e: { ...measureBounds.e } } : null,
+    trade: collectTradeDefaults(),
+  });
+  const saveClientState = () => {
+    if (suppressClientSave || !session || !session.id) return;
+    const sid = session.id;
+    clearTimeout(clientSaveTimer);
+    clientSaveTimer = setTimeout(() => {
+      if (!session || session.id !== sid) return;   // switched sessions — drop stale write
+      api(`/api/session/${sid}/client_state`, {
+        method: "POST", body: JSON.stringify(collectClientState()),
+      }).catch(() => {});
+    }, 600);
+  };
+  const applyTradeDefaults = (td) => {
+    if (!td) return;
+    const d = td.desktop || {};
+    if ($("#t-qty") && "qty" in d) $("#t-qty").value = d.qty;
+    if ($("#use-sl")) $("#use-sl").checked = !!d.slOn;
+    if ($("#t-sl-pct")) { $("#t-sl-pct").value = d.slOn ? (d.slPct ?? "") : ""; $("#t-sl-pct").disabled = !d.slOn; }
+    if ($("#use-tp")) $("#use-tp").checked = !!d.tpOn;
+    if ($("#t-tp-pct")) { $("#t-tp-pct").value = d.tpOn ? (d.tpPct ?? "") : ""; $("#t-tp-pct").disabled = !d.tpOn; }
+    const m = td.mobile || {};
+    if ($("#m-lots") && "lots" in m) $("#m-lots").value = m.lots;
+    if ($("#m-use-sl")) $("#m-use-sl").setAttribute("aria-pressed", m.slOn ? "true" : "false");
+    if ($("#m-sl-pct") && "slPct" in m) $("#m-sl-pct").value = m.slPct;
+    if ($("#m-use-tp")) $("#m-use-tp").setAttribute("aria-pressed", m.tpOn ? "true" : "false");
+    if ($("#m-tp-pct") && "tpPct" in m) $("#m-tp-pct").value = m.tpPct;
+  };
+  const applyClientState = (cs) => {
+    if (!cs) return;
+    suppressClientSave = true;
+    try {
+      // active indicators — clear all, then re-activate the saved set
+      document.querySelectorAll(".ind.active").forEach((el) => el.classList.remove("active"));
+      for (const spec of cs.indicators || []) {
+        if (!spec || !spec.kind) continue;
+        let sel = `.ind[data-kind="${spec.kind}"]`;
+        if (Number.isFinite(spec.period)) sel += `[data-period="${spec.period}"]`;
+        const btn = document.querySelector(sel);
+        if (btn) btn.classList.add("active");
+      }
+      renderIndicators();
+      // h-lines
+      clearHlines();
+      for (const h of cs.hlines || []) if (h && isFinite(h.price)) addHlineSpec(h);
+      // measure
+      clearMeasure();
+      if (cs.measure && cs.measure.s && cs.measure.e) {
+        measureFirst = { time: cs.measure.s.time, price: cs.measure.s.price };
+        finishMeasure({ time: cs.measure.e.time, price: cs.measure.e.price });
+      }
+      // last-used lots / SL / TP
+      applyTradeDefaults(cs.trade);
+    } finally {
+      suppressClientSave = false;
     }
   };
 
@@ -1880,7 +2093,7 @@
         at_time: session.is_live ? Math.floor(Date.now() / 1000) : null,
       }),
     });
-    applySession(data);
+    applySession(data, { keepCandles: true });   // trades changed, candles didn't
     return data;
   };
 
@@ -1947,7 +2160,7 @@
           at_time: session.is_live ? Math.floor(Date.now() / 1000) : null,
         }),
       });
-      applySession(data);
+      applySession(data, { keepCandles: true });   // close only changes trades
     } catch (err) { setStatus(err.message, true); }
   };
 
@@ -2077,31 +2290,41 @@
       price: h.price, color: h.color, lineWidth: h.width, lineStyle: h.style,
       title: hlineTitle(h.price),
     });
+    saveClientState();
   };
-  const addHline = (price) => {
+  // Create an h-line from an explicit spec (price + style); shared by the user
+  // "place line" path and client_state restore.
+  const addHlineSpec = ({ price, color, width, style }) => {
+    const c = color || HLINE_DEFAULT_COLOR, w = width ?? 1, st = style ?? 0;
     const id = `hl_${++hlineCounter}`;
-    const color = HLINE_DEFAULT_COLOR, width = 1, style = 0;
     const line = candleSeries.createPriceLine({
-      price, color, lineStyle: style, lineWidth: width,
+      price, color: c, lineStyle: st, lineWidth: w,
       axisLabelVisible: true, title: hlineTitle(price),
     });
-    hlines.push({ id, line, price, color, width, style });
+    hlines.push({ id, line, price, color: c, width: w, style: st });
+  };
+  const addHline = (price) => {
+    addHlineSpec({ price, color: HLINE_DEFAULT_COLOR, width: 1, style: 0 });
+    saveClientState();
   };
   const removeHline = (id) => {
     const idx = hlines.findIndex((h) => h.id === id);
     if (idx < 0) return;
     candleSeries.removePriceLine(hlines[idx].line);
     hlines.splice(idx, 1);
+    saveClientState();
   };
   const clearHlines = () => {
     for (const h of hlines) candleSeries.removePriceLine(h.line);
     hlines.length = 0;
+    saveClientState();
   };
   const clearMeasure = () => {
     if (measureSeries) { chart.removeSeries(measureSeries); measureSeries = null; }
     measureFirst = null;
     measureBounds = null;
     $("#measure-summary").textContent = "";
+    saveClientState();
   };
   // Pin the measure readout above the drawn line, centered over its span, so it
   // tracks the line as the chart pans/zooms (called from the range-change sub).
@@ -2126,26 +2349,56 @@
   // opens the style popup.
   // A drag target abstracts an h-line or a trade level behind apply (live drag) /
   // commit (persist) / click (tap → popup). H-lines commit locally; trade lines
-  // POST /modify with the single changed field.
-  const tradeLineTarget = (it) => ({
-    apply: it.kind === "entry" ? null
-      : (price) => { it.price = price; it.line.applyOptions({ price }); },
-    commit: it.kind === "entry" ? null
-      : async (price) => {
-        const patch = it.kind === "sl" ? { sl: price }
-                    : it.kind === "tp" ? { tp: price } : { limit_price: price };
-        try {
-          const data = await api(`/api/session/${session.id}/trade/${it.tradeId}/modify`, {
-            method: "POST", body: JSON.stringify(patch),
-          });
-          applySession(data);
-        } catch (err) {
-          setStatus(err.message, true);
-          if (session) applySession(session);   // re-render snaps the line back
-        }
-      },
-    click: (evt) => openOrderPopup(it.tradeId, it.kind, evt),
-  });
+  // POST /modify. Dragging a pending limit line carries its SL/TP along by the
+  // same delta so their distance to entry is preserved (committed in one patch).
+  const tradeLineTarget = (it) => {
+    const entry = tradePriceLines.get(it.tradeId);
+    const slIt = entry && entry.items.find((x) => x.kind === "sl");
+    const tpIt = entry && entry.items.find((x) => x.kind === "tp");
+    const coupled = it.kind === "limit" && (slIt || tpIt);   // move SL/TP with the limit
+    // capture originals once (this target is rebuilt on each pointerdown)
+    const origPrice = it.price;
+    const origSl = slIt ? slIt.price : null;
+    const origTp = tpIt ? tpIt.price : null;
+    const setLine = (item, price) => { if (item) { item.price = price; item.line.applyOptions({ price }); } };
+    return {
+      apply: it.kind === "entry" ? null
+        : (price) => {
+          setLine(it, price);
+          if (coupled) {
+            const d = price - origPrice;
+            if (slIt) setLine(slIt, origSl + d);
+            if (tpIt) setLine(tpIt, origTp + d);
+          }
+        },
+      commit: it.kind === "entry" ? null
+        : async (price) => {
+          let patch;
+          if (coupled) {
+            const d = price - origPrice;
+            patch = { limit_price: price };
+            if (origSl != null) patch.sl = origSl + d;
+            if (origTp != null) patch.tp = origTp + d;
+          } else {
+            patch = it.kind === "sl" ? { sl: price }
+                  : it.kind === "tp" ? { tp: price } : { limit_price: price };
+          }
+          try {
+            const data = await api(`/api/session/${session.id}/trade/${it.tradeId}/modify`, {
+              method: "POST", body: JSON.stringify(patch),
+            });
+            applySession(data, { keepCandles: true });   // only the order changed
+          } catch (err) {
+            setStatus(err.message, true);
+            // backend rejected → snap the dragged line(s) back to their real prices
+            setLine(it, origPrice);
+            if (coupled) { setLine(slIt, origSl); setLine(tpIt, origTp); }
+            if (session) applySession(session, { keepCandles: true });
+          }
+        },
+      click: (evt) => openOrderPopup(it.tradeId, it.kind, evt),
+    };
+  };
   const draggableAt = (y, tol = HLINE_HIT_PX) => {
     for (let i = hlines.length - 1; i >= 0; i--) {
       const h = hlines[i];
@@ -2505,6 +2758,7 @@
     measureBounds = { s, e };
     positionMeasureLabel();
     measureFirst = null;
+    saveClientState();
   };
 
   chart.subscribeClick((param) => {
@@ -2613,8 +2867,8 @@
   });
   const toggleChip = (btn) =>
     btn.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") === "true" ? "false" : "true");
-  $("#m-use-sl")?.addEventListener("click", () => toggleChip($("#m-use-sl")));
-  $("#m-use-tp")?.addEventListener("click", () => toggleChip($("#m-use-tp")));
+  $("#m-use-sl")?.addEventListener("click", () => { toggleChip($("#m-use-sl")); saveClientState(); });
+  $("#m-use-tp")?.addEventListener("click", () => { toggleChip($("#m-use-tp")); saveClientState(); });
 
   const mobileMarketOrder = async (side) => {
     if (!session) return;
@@ -2703,6 +2957,7 @@
     btn.addEventListener("click", () => {
       btn.classList.toggle("active");
       renderIndicators();
+      saveClientState();
     });
   });
   const tapePctSlider = $("#tape-large-pct");
@@ -2808,10 +3063,16 @@
       input.disabled = !box.checked;
       if (!box.checked) { input.value = ""; clearFieldError(input); }
       else input.focus();
+      saveClientState();
     });
   };
   wireToggle($("#use-sl"), $("#t-sl-pct"));
   wireToggle($("#use-tp"), $("#t-tp-pct"));
+  // persist last-used lots / SL% / TP% (both desktop and mobile fields) so they
+  // restore with the session. `change` fires on blur/Enter, not per keystroke.
+  ["#t-qty", "#t-sl-pct", "#t-tp-pct", "#m-lots", "#m-sl-pct", "#m-tp-pct"].forEach((id) => {
+    $(id)?.addEventListener("change", saveClientState);
+  });
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && armedFor) { disarm(); return; }
@@ -2828,5 +3089,6 @@
 
   setPlayIcon(false);
   autoLoadReady = true;
-  loadSession();
+  // Restore the last saved session if there is one; otherwise load the default.
+  (async () => { if (!(await restoreLatest())) loadSession(); })();
 })();

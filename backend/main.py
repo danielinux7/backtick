@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -18,7 +19,7 @@ from .aggtrades import fetch_agg_trades, fetch_rest_recent
 from .auth import _cookie_kwargs, create_guest, current_user, current_user_optional, is_production
 from .binance import TF_MS, VALID_TFS, RateLimitedError, fetch_klines
 from .db import Base, engine, get_db
-from .models import User
+from .models import ReplaySnapshot, User
 from .replay import SessionStore, Trade
 from .routes_auth import router as auth_router
 from .routes_symbols import router as symbols_router
@@ -139,6 +140,7 @@ def _serialize_session(sess) -> dict:
         "in_tick": in_tick,                                # partial candle present
         "tick_idx": int(sess.tick_idx) if in_tick else 0,
         "is_live": bool(sess.is_live),
+        "client_state": sess.client_state,                 # frontend UI state (indicators, drawings, trade defaults)
     }
 
 
@@ -186,6 +188,29 @@ async def create_session(
     except Exception as e:
         raise HTTPException(502, f"data fetch failed: {e}") from e
     await save_snapshot(db, sess)
+    return _serialize_session(sess)
+
+
+# Declared before the /{sid} route so "latest" isn't swallowed as a session id.
+@app.get("/api/session/latest")
+async def latest_session(
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+):
+    """Most-recently-touched session for the current user, rehydrated and
+    serialized like GET /{sid}. Lets the frontend restore the last chart
+    (cursor + open/pending/closed trades) on load and after login, instead of
+    always starting a fresh default session. 204 when the user has none."""
+    row = (await db.execute(
+        select(ReplaySnapshot)
+        .where(ReplaySnapshot.user_id == user.id)
+        .order_by(ReplaySnapshot.updated_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    if row is None:
+        return Response(status_code=204)
+    sess = await hydrate_session(db, store, row.sid, user.id)
+    if sess is None:
+        return Response(status_code=204)
     return _serialize_session(sess)
 
 
@@ -437,6 +462,21 @@ async def modify_trade(
             raise HTTPException(400, str(e))
     await save_snapshot(db, sess)
     return _serialize_session(sess)
+
+
+@app.post("/api/session/{sid}/client_state")
+async def set_client_state(
+    sid: str, state: dict,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Store the frontend's opaque per-session UI state (active indicators,
+    h-lines, measure, last-used lots/SL/TP) on the session so it persists in the
+    snapshot and restores with the chart. The backend treats it as a black box."""
+    sess = await _resolve(db, sid, user.id)
+    with sess.lock:
+        sess.client_state = state or {}
+    await save_snapshot(db, sess)
+    return {"ok": True}
 
 
 @app.get("/api/session/{sid}/footprint")

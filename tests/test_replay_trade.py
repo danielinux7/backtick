@@ -293,3 +293,23 @@ def test_snapshot_round_trip_preserves_trades_and_cursor():
     r = dst.trades[0]
     assert (r.id, r.side, r.qty, r.entry_price, r.sl, r.tp) == \
            ("abc", "short", 2.0, 100.0, 110.0, 95.0)
+
+
+def test_snapshot_round_trip_preserves_client_state():
+    src = make_session(100, 110, 90, 105)
+    src.client_state = {
+        "indicators": [{"kind": "ema", "period": 50}, {"kind": "cvd"}],
+        "hlines": [{"price": 101.5, "color": "#fff", "width": 1, "style": 0}],
+        "measure": None,
+        "trade": {"desktop": {"qty": "3", "slOn": True, "slPct": "1.5"}},
+    }
+    dst = make_session(100, 110, 90, 105)
+    dst.apply_snapshot(src.to_snapshot())
+    assert dst.client_state == src.client_state
+
+
+def test_apply_snapshot_defaults_client_state_to_empty_dict():
+    # snapshots written before client_state existed must restore as {} (not None)
+    dst = make_session(100, 110, 90, 105)
+    dst.apply_snapshot({"cursor": 0, "trades": []})   # legacy snapshot, no client_state
+    assert dst.client_state == {}
