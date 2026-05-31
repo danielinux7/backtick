@@ -198,11 +198,14 @@
     // Start collapsed so the chart owns the whole viewport on first paint.
     setCollapsed(true);
     // A drag that started on the tab strip must not also toggle the tab on the
-    // trailing click — this one-shot flag swallows it.
-    let suppressTabClick = false;
+    // trailing click. A sticky one-shot flag was unreliable on touch (a drag
+    // often fires NO trailing click, so the flag lingered and ate the user's
+    // next real tap — the "tap twice" bug). Instead, ignore only a click that
+    // lands within a short window after a drag ends.
+    let lastDragEndAt = 0;
     tabs.forEach((btn) => {
       btn.addEventListener("click", () => {
-        if (suppressTabClick) { suppressTabClick = false; return; }
+        if (Date.now() - lastDragEndAt < 350) return;   // swallow the drag's trailing click
         const collapsed = pane.dataset.collapsed === "true";
         if (collapsed) {                       // closed → open to this tab
           selectTab(btn.dataset.tab);
@@ -253,7 +256,7 @@
         el.removeEventListener("pointermove", onMove);
         el.removeEventListener("pointerup", onUp);
         el.removeEventListener("pointercancel", onUp);
-        if (dragging && threshold > 0) suppressTabClick = true;
+        if (dragging && threshold > 0) lastDragEndAt = Date.now();
       };
       el.addEventListener("pointermove", onMove);
       el.addEventListener("pointerup", onUp);

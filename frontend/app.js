@@ -63,7 +63,7 @@
     layout: {
       background: { color: "#131722" }, textColor: "#d1d4dc", attributionLogo: false,
       // Themed native pane separator (drag to resize indicator sub-panes).
-      panes: { enableResize: true, separatorColor: "#2a2e39", separatorHoverColor: "#3a4150" },
+      panes: { enableResize: true, separatorColor: "#ffffff", separatorHoverColor: "#ffffff" },
     },
     grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
     timeScale: {
