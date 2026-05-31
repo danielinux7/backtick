@@ -409,14 +409,17 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .chart-pane .controls-left, .chart-pane .controls-center { padding: 0 4px; gap: 4px; border: 0; }
   .speed-cap { display: none; }
   .controls-left label { gap: 0; }
-  /* 27px square transport buttons; the global 36px touch min-height is relaxed. */
+  /* 30px square transport buttons; the global 36px touch min-height is relaxed. */
   .chart-pane .controls button { min-height: 0; }
-  .chart-pane .controls-center .icon-btn { width: 27px; height: 27px; min-width: 0; padding: 0; }
-  .chart-pane .controls-center .icon-btn svg { width: 16px; height: 16px; }
-  .chart-pane .mode-pill { padding: 0; border: 0; height: 27px; }
-  .chart-pane .mode-pill button { width: 27px; height: 27px; padding: 0; justify-content: center; }
-  /* Speed dropdown trigger also sits in this row — match the 27px height. */
-  .chart-pane .controls .dd-trigger { min-height: 27px; padding: 1px 8px; }
+  .chart-pane .controls-center .icon-btn { width: 30px; height: 30px; min-width: 0; padding: 0; }
+  .chart-pane .controls-center .icon-btn svg { width: 18px; height: 18px; }
+  /* Segmented pill: clip children to the pill's radius (overflow:hidden) and
+     square the button corners so the active fill matches the pill edges — no
+     corner "notch" jumping between sides on switch. */
+  .chart-pane .mode-pill { padding: 0; border: 0; height: 30px; gap: 0; overflow: hidden; }
+  .chart-pane .mode-pill button { width: 30px; height: 30px; padding: 0; border-radius: 0; justify-content: center; }
+  /* Speed dropdown trigger also sits in this row — match the 30px height. */
+  .chart-pane .controls .dd-trigger { min-height: 30px; padding: 1px 8px; }
 
   /* Keep trade-form labels (e.g. "Side for picks") on one line; let the
      adjacent control flex into the remaining width instead of forcing the
