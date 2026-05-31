@@ -119,6 +119,10 @@ class Session:
     # — recorded relative to the start of the candle so we can stitch a running
     # cumulative OHLC line at request time without re-walking aggTrades
     cvd_cache: dict[int, dict] = field(default_factory=dict)
+    # opaque per-session UI state owned by the frontend (active indicators,
+    # h-lines, measure, last-used lots/SL/TP). Persisted verbatim so a restored
+    # session comes back with the same chart setup; the backend never reads it.
+    client_state: dict = field(default_factory=dict)
 
     def candles_so_far(self) -> list[dict]:
         sub = self.df.iloc[: self.cursor + 1]
@@ -407,6 +411,7 @@ class Session:
             "cursor": int(self.cursor),
             "is_live": bool(self.is_live),
             "trades": [t.to_dict() for t in self.trades],
+            "client_state": self.client_state,
         }
 
     def apply_snapshot(self, snap: dict) -> None:
@@ -422,6 +427,7 @@ class Session:
             if t is not None:
                 rebuilt.append(t)
         self.trades = rebuilt
+        self.client_state = snap.get("client_state") or {}
         self.reset_tick_state()
 
     def process_candle(self) -> list[Trade]:
