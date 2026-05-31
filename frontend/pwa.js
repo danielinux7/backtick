@@ -221,26 +221,33 @@
     // it's easy to land on. On the tab strip we use a small move threshold so a
     // tap still switches tabs while a drag resizes.
     const tabStrip = document.getElementById("drawer-tabs");
+    // The drawer is anchored to the bottom of the viewport and grows upward, so
+    // its bottom edge is fixed. Sizing from `bottom - pointerY` (rather than a
+    // delta off a start height that changes the moment we un-collapse) keeps the
+    // top edge glued to the finger with no jitter.
     const beginDrawerDrag = (e, el, threshold = 0) => {
       const startY = e.clientY;
-      const startH = pane.getBoundingClientRect().height;
+      const paneBottom = pane.getBoundingClientRect().bottom;   // stable while dragging
       let dragging = threshold === 0;
+      const resizeTo = (clientY) => {
+        const h = Math.max(40, Math.min(window.innerHeight * 0.85, paneBottom - clientY));
+        drawerHeight = h + "px";
+        pane.style.height = drawerHeight;
+      };
       if (dragging) {
         e.preventDefault();
         try { el.setPointerCapture(e.pointerId); } catch (_) {}
         if (pane.dataset.collapsed === "true") setCollapsed(false);
+        resizeTo(startY);
       }
       const onMove = (ev) => {
-        const dy = startY - ev.clientY;        // drag up = taller
         if (!dragging) {
-          if (Math.abs(dy) < threshold) return;
+          if (Math.abs(startY - ev.clientY) < threshold) return;
           dragging = true;
           try { el.setPointerCapture(ev.pointerId); } catch (_) {}
           if (pane.dataset.collapsed === "true") setCollapsed(false);
         }
-        const h = Math.max(40, Math.min(window.innerHeight * 0.85, startH + dy));
-        drawerHeight = h + "px";
-        pane.style.height = drawerHeight;
+        resizeTo(ev.clientY);
       };
       const onUp = () => {
         el.removeEventListener("pointermove", onMove);

@@ -11,6 +11,9 @@
 
     const wrap = document.createElement("div");
     wrap.className = "dd";
+    // data-dropup opens the popover upward (for selects near the bottom edge,
+    // e.g. the replay-speed control sitting above the fixed mobile trade bar).
+    if (sel.hasAttribute("data-dropup")) wrap.classList.add("dd-up");
     sel.parentNode.insertBefore(wrap, sel);
     wrap.appendChild(sel);
     sel.classList.add("dd-native");   // hidden, but still submitted in FormData
@@ -80,6 +83,9 @@
     });
     // reflect programmatic changes (e.g. symbol-picker setting the market) on the trigger
     sel.addEventListener("change", syncLabel);
+    // …and re-sync when the options themselves are rebuilt without a change event
+    // (e.g. #speed is repopulated when the Tick/Candle replay mode switches).
+    new MutationObserver(syncLabel).observe(sel, { childList: true });
     document.addEventListener("click", (e) => {
       if (!pop.hidden && !wrap.contains(e.target)) close();
     });
@@ -91,7 +97,7 @@
   }
 
   function init() {
-    ["#mode-select", 'select[name="market"]', "#tf-select"].forEach((q) => {
+    ["#mode-select", 'select[name="market"]', "#tf-select", "#speed"].forEach((q) => {
       enhanceSelect(document.querySelector(q));
     });
   }

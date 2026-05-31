@@ -166,7 +166,7 @@
                 </svg>
               </button>
             </div>
-            <label>Speed <select id="speed"></select></label>
+            <label class="speed-label"><span class="speed-cap">Speed</span> <select id="speed" data-dropup></select></label>
           </div>
           <div class="controls-center">
             <button id="back-1" class="icon-btn" disabled title="Previous (←)" aria-label="Previous">
@@ -194,6 +194,7 @@
     <aside class="side-pane" id="side-pane" data-tab="tape">
       <div class="drawer-resize" id="drawer-resize" title="Drag to resize"></div>
       <div class="drawer-tabs" id="drawer-tabs" role="tablist">
+        <span class="drawer-grip" aria-hidden="true"></span>
         <button type="button" data-tab="tape"  class="active" role="tab" aria-selected="true">Tape</button>
         <button type="button" data-tab="history" role="tab" aria-selected="false">History</button>
       </div>
@@ -265,8 +266,8 @@
   <div id="mobile-trade-bar" aria-hidden="true">
     <div class="mtb-toggles">
       <button type="button" id="m-use-sl" class="mtb-chip" aria-pressed="true">SL</button>
-      <input type="number" id="m-sl-pct" class="mtb-pct" step="0.01" min="0" value="1" placeholder="%" inputmode="decimal" />
-      <input type="number" id="m-tp-pct" class="mtb-pct" step="0.01" min="0" value="1" placeholder="%" inputmode="decimal" />
+      <label class="mtb-pct-wrap"><input type="number" id="m-sl-pct" class="mtb-pct" step="0.01" min="0" value="1" inputmode="decimal" /><span class="mtb-pct-suffix">%</span></label>
+      <label class="mtb-pct-wrap"><input type="number" id="m-tp-pct" class="mtb-pct" step="0.01" min="0" value="1" inputmode="decimal" /><span class="mtb-pct-suffix">%</span></label>
       <button type="button" id="m-use-tp" class="mtb-chip" aria-pressed="true">TP</button>
     </div>
     <div class="mtb-main">
@@ -278,7 +279,7 @@
         </span>
       </button>
       <label class="mtb-lots">
-        <span class="mtb-lots-head">Lots <span class="mtb-caret">&#8964;</span></span>
+        <span class="mtb-lots-head">Lots</span>
         <input type="number" id="m-lots" value="1" step="any" min="0" inputmode="decimal" />
       </label>
       <button type="button" id="m-buy" class="mtb-side mtb-buy">
