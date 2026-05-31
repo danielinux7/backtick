@@ -131,26 +131,34 @@ async def create_guest(db: AsyncSession) -> tuple[User, str]:
     return user, token
 
 
-async def upsert_oauth_user(db: AsyncSession, email: str, google_sub: str) -> User:
-    """Link or create the user identified by Google's sub claim. If an account
-    already exists for this email (password-only), attach the google_sub to it
-    rather than creating a duplicate."""
+async def upsert_oauth_user(
+    db: AsyncSession, email: str, *, google_sub: str | None = None, apple_sub: str | None = None
+) -> User:
+    """Link or create the user identified by an OAuth provider's `sub` claim
+    (Google or Apple). Resolution order: (1) existing row for this sub — returned
+    as-is, so returning users don't need a fresh email (Apple omits it after the
+    first sign-in); (2) existing row for this email — attach the sub; (3) create.
+    Exactly one of google_sub / apple_sub must be set."""
     import re
+    sub_col = User.google_sub if google_sub else User.apple_sub
+    sub_val = google_sub or apple_sub
+    if sub_val:
+        existing = (await db.execute(select(User).where(sub_col == sub_val))).scalar_one_or_none()
+        if existing is not None:
+            return existing
     email = (email or "").lower().strip()
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         raise HTTPException(400, "invalid email from oauth provider")
-    res = await db.execute(select(User).where(User.google_sub == google_sub))
-    user = res.scalar_one_or_none()
-    if user is not None:
-        return user
-    res = await db.execute(select(User).where(User.email == email))
-    user = res.scalar_one_or_none()
-    if user is not None:
-        user.google_sub = google_sub
-        user.email_verified = True
+    by_email = (await db.execute(select(User).where(User.email == email))).scalar_one_or_none()
+    if by_email is not None:
+        if google_sub:
+            by_email.google_sub = google_sub
+        else:
+            by_email.apple_sub = apple_sub
+        by_email.email_verified = True
         await db.commit()
-        return user
-    user = User(email=email, google_sub=google_sub, email_verified=True)
+        return by_email
+    user = User(email=email, google_sub=google_sub, apple_sub=apple_sub, email_verified=True)
     db.add(user)
     await db.commit()
     await db.refresh(user)

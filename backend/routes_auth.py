@@ -4,7 +4,9 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import time
 
+import httpx
 from authlib.integrations.starlette_client import OAuth
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -93,6 +95,7 @@ async def me(user: User = Depends(current_user)) -> dict:
         "is_guest": guest,
         "email_verified": user.email_verified,
         "linked_google": user.google_sub is not None,
+        "linked_apple": user.apple_sub is not None,
     }
 
 
@@ -198,8 +201,126 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
                     await db.commit()
                     user = current
     if user is None:
-        user = await upsert_oauth_user(db, email, sub)
+        user = await upsert_oauth_user(db, email, google_sub=sub)
     session_token, _ = await create_session_token(db, user.id)
     resp = RedirectResponse(url="/")
+    resp.set_cookie(value=session_token, **_cookie_kwargs(secure=is_production()))
+    return resp
+
+
+# ---- Apple Sign In ---------------------------------------------------------
+# Apple requires response_mode=form_post when the name/email scope is requested,
+# so the callback is a cross-site POST. SameSite=lax cookies aren't sent on that
+# POST, so we can't use the SessionMiddleware for CSRF state — instead we carry a
+# signed, timestamped `state` token (itsdangerous) that we minted in /start. The
+# client secret is a short-lived ES256 JWT signed with the .p8 key.
+
+_APPLE_AUTH_URL = "https://appleid.apple.com/auth/authorize"
+_APPLE_TOKEN_URL = "https://appleid.apple.com/auth/token"
+_APPLE_KEYS_URL = "https://appleid.apple.com/auth/keys"
+
+
+def _apple_cfg() -> dict:
+    return {
+        "client_id": os.environ.get("APPLE_CLIENT_ID"),   # Services ID, e.g. com.backtick.web
+        "team_id": os.environ.get("APPLE_TEAM_ID"),
+        "key_id": os.environ.get("APPLE_KEY_ID"),
+        "private_key": os.environ.get("APPLE_PRIVATE_KEY"),  # .p8 PEM contents
+    }
+
+
+def _apple_enabled() -> bool:
+    return all(_apple_cfg().values())
+
+
+def _apple_client_secret() -> str:
+    """Apple's client_secret is an ES256 JWT signed with the team's .p8 key."""
+    from authlib.jose import jwt as jose_jwt
+    cfg = _apple_cfg()
+    now = int(time.time())
+    header = {"alg": "ES256", "kid": cfg["key_id"]}
+    payload = {
+        "iss": cfg["team_id"],
+        "iat": now,
+        "exp": now + 3600,                         # short-lived; only used during this flow
+        "aud": "https://appleid.apple.com",
+        "sub": cfg["client_id"],
+    }
+    return jose_jwt.encode(header, payload, cfg["private_key"]).decode("ascii")
+
+
+def _apple_state_serializer() -> "URLSafeTimedSerializer":
+    from itsdangerous import URLSafeTimedSerializer
+    secret = os.environ.get("SESSION_SECRET", "dev-only-not-secret-change-me")
+    return URLSafeTimedSerializer(secret, salt="apple-oauth-state")
+
+
+@router.get("/apple/start")
+async def apple_start(request: Request) -> RedirectResponse:
+    if not _apple_enabled():
+        raise HTTPException(503, "Apple Sign In is not configured on this server")
+    from urllib.parse import urlencode
+    redirect_uri = str(request.url_for("apple_callback"))
+    params = {
+        "response_type": "code",
+        "response_mode": "form_post",
+        "client_id": _apple_cfg()["client_id"],
+        "redirect_uri": redirect_uri,
+        "scope": "name email",
+        "state": _apple_state_serializer().dumps("apple"),
+    }
+    return RedirectResponse(f"{_APPLE_AUTH_URL}?{urlencode(params)}")
+
+
+@router.post("/apple/callback", name="apple_callback")
+async def apple_callback(request: Request, db: AsyncSession = Depends(get_db)):
+    if not _apple_enabled():
+        raise HTTPException(503, "Apple Sign In is not configured on this server")
+    from authlib.jose import JsonWebKey, jwt as jose_jwt
+    from itsdangerous import BadSignature, SignatureExpired
+
+    form = await request.form()
+    code = form.get("code")
+    state = form.get("state")
+    try:
+        _apple_state_serializer().loads(state or "", max_age=600)
+    except (BadSignature, SignatureExpired):
+        raise HTTPException(400, "invalid or expired Apple state")
+    if not code:
+        raise HTTPException(400, "missing Apple authorization code")
+
+    redirect_uri = str(request.url_for("apple_callback"))
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": redirect_uri,
+        "client_id": _apple_cfg()["client_id"],
+        "client_secret": _apple_client_secret(),
+    }
+    async with httpx.AsyncClient(timeout=10) as cx:
+        tok = await cx.post(_APPLE_TOKEN_URL, data=data)
+        if tok.status_code != 200:
+            raise HTTPException(400, "Apple token exchange failed")
+        id_token = tok.json().get("id_token")
+        if not id_token:
+            raise HTTPException(400, "Apple did not return an id_token")
+        jwks = (await cx.get(_APPLE_KEYS_URL)).json()
+
+    try:
+        claims = jose_jwt.decode(id_token, JsonWebKey.import_key_set(jwks))
+        claims.validate()
+    except Exception:
+        raise HTTPException(400, "could not verify Apple identity token")
+    sub = claims.get("sub")
+    email = claims.get("email")
+    if not sub:
+        raise HTTPException(400, "Apple identity token missing subject")
+
+    # No guest-attach here: a cross-site POST doesn't carry the lax `auth` cookie,
+    # so we can't see the current guest. That's fine — on login the frontend
+    # restores this account's own last session anyway.
+    user = await upsert_oauth_user(db, email or "", apple_sub=sub)
+    session_token, _ = await create_session_token(db, user.id)
+    resp = RedirectResponse(url="/", status_code=303)   # 303: POST → GET
     resp.set_cookie(value=session_token, **_cookie_kwargs(secure=is_production()))
     return resp

@@ -30,6 +30,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     google_sub: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True, index=True)
+    apple_sub: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True, index=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 

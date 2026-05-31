@@ -1731,6 +1731,13 @@
       if (inheritTrades && session.trades?.length) {
         body.inherit_trades = session.trades;
       }
+      // Carry the chart setup (indicators, h-lines, measure, lots/SL/TP) forward
+      // into the new session. Each setup change (symbol/tf/mode) makes a brand
+      // new session; without this the new one starts with empty client_state and
+      // a later restore would wipe the setup. H-lines/measure are price/time-tied
+      // so only keep them when the symbol is unchanged (e.g. a live↔replay flip).
+      const carried = session ? collectClientState() : null;
+      if (carried && !sameSymbol) { carried.hlines = []; carried.measure = null; }
       resetForNewSession({ preserveHlines: sameSymbol, preserveTrades: inheritTrades });
       closeLiveStream();
       const data = await api("/api/session", {
@@ -1738,6 +1745,7 @@
       });
       applySession(data, true);
       clearFieldError(setupForm.symbol);   // a prior "unknown symbol" cleared on success
+      if (carried) { applyClientState(carried); saveClientState(); }   // re-establish + persist to the new session
       if (data.is_live) connectLiveStream(data);
       // Clear the transient "connecting…/loading…" line. The loaded-candle count
       // was just diagnostic noise (the user reads it as logging), not something
