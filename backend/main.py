@@ -39,13 +39,29 @@ app.add_middleware(
 )
 
 
+def _ensure_schema(conn) -> None:
+    """Add columns introduced after a table was first created. create_all() only
+    creates missing *tables*, never alters existing ones, and there's no Alembic
+    wired up — so new nullable columns (e.g. users.apple_sub) need this tiny
+    idempotent guard to exist on already-deployed databases."""
+    from sqlalchemy import inspect, text
+    insp = inspect(conn)
+    if "users" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("users")}
+    if "apple_sub" not in cols:
+        conn.execute(text("ALTER TABLE users ADD COLUMN apple_sub VARCHAR(255)"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_apple_sub ON users (apple_sub)"))
+
+
 @app.on_event("startup")
 async def _startup() -> None:
-    """Auto-create tables on cold start in dev. In production Alembic handles
-    migrations as a preDeploy step, but create_all() is idempotent so it's
-    safe to keep here for SQLite-first local runs."""
+    """Auto-create tables on cold start, then patch in any newly-added columns.
+    create_all() is idempotent; _ensure_schema handles additive migrations since
+    there's no Alembic step."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_ensure_schema)
 
 
 app.include_router(auth_router)

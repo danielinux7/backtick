@@ -21,6 +21,17 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      # Sign in with Apple — set in the Render dashboard. All four are required
+      # for the Apple button to work; if any is absent, /apple/* returns 503 and
+      # the feature stays inert (Google + email auth unaffected).
+      - key: APPLE_CLIENT_ID        # Services ID, e.g. com.backtick.web
+        sync: false
+      - key: APPLE_TEAM_ID          # 10-char Apple Developer Team ID
+        sync: false
+      - key: APPLE_KEY_ID           # Key ID of the Sign-in-with-Apple .p8 key
+        sync: false
+      - key: APPLE_PRIVATE_KEY      # full .p8 PEM contents (-----BEGIN PRIVATE KEY----- …)
+        sync: false
 
 databases:
   - name: backtick-db
