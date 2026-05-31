@@ -37,6 +37,18 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .user-avatar:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.45); }
 .user-avatar:active { transform: translateY(0); }
 .user-avatar.is-guest { background: #3a4255; color: #d1d4dc; }
+/* Install / Add-to-Home-Screen — a download icon sitting just left of the avatar
+   (relocated out of the avatar menu). */
+.install-btn {
+  width: 30px; height: 30px; margin-right: 8px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  vertical-align: middle;
+  background: transparent; color: #b0b6c0;
+  border: 1px solid #2a2e39; border-radius: 50%;
+  cursor: pointer; transition: color 0.1s, background 0.1s, border-color 0.1s;
+}
+.install-btn:hover { color: #26a69a; border-color: #3a4255; background: #1e222d; }
+.install-btn svg { display: block; }
 .user-menu {
   position: absolute; top: calc(100% + 6px); right: 0;
   min-width: 220px; max-width: 280px;
@@ -204,6 +216,8 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
   z-index: 200; padding: 6px; display: flex; flex-direction: column; gap: 2px;
 }
 .dd .dd-popover[hidden] { display: none; }
+/* drop-up variant (e.g. #speed, which sits above the fixed mobile trade bar) */
+.dd.dd-up .dd-popover { top: auto; bottom: calc(100% + 4px); }
 .dd .dd-row {
   text-align: left; background: transparent; color: #d1d4dc;
   border: 1px solid transparent; border-radius: 4px;
@@ -266,7 +280,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .setup > * { flex: 0 1 auto; min-width: 0; }
   .setup > .symbol-picker > input { min-width: 0; }
   .setup .live-indicator { display: none; }
-  #status    { order: 3; }
+  #status    { display: none !important; }   /* no bottom-right toast on phones */
   .setup select, .setup input, .setup button { font-size: 11px; padding: 5px 4px; min-height: 34px; }
   .symbol-popover { width: min(78vw, 240px); max-height: 50vh; }
   /* Dropdowns share the single setup strip. Size each to its label (no caret,
@@ -314,19 +328,16 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   .side-pane[data-collapsed="true"] .drawer-tabs button.active {
     color: #8a93a3; border-bottom-color: transparent;
   }
-  /* Draggable top edge of the drawer (hidden when collapsed). */
-  .side-pane > .drawer-resize {
-    display: block; height: 24px; flex-shrink: 0; cursor: ns-resize;
-    touch-action: none; background: #0f1218;
-    position: sticky; top: 0; z-index: 7;
+  /* The standalone resize strip is gone on mobile — the tab strip itself is the
+     drag surface (pwa.js), with a grip overlaid on its top edge between the
+     tabs. This reclaims the strip's vertical space. */
+  .side-pane > .drawer-resize { display: none; }
+  .drawer-tabs { padding-top: 7px; }          /* room for the grip above the tabs */
+  .drawer-grip {
+    display: block; position: absolute; top: 3px; left: 50%;
+    transform: translateX(-50%); z-index: 5; pointer-events: none;
+    width: 44px; height: 4px; border-radius: 3px; background: #3a4150;
   }
-  .drawer-resize::before {
-    content: ""; position: absolute; left: 50%; top: 50%;
-    transform: translate(-50%, -50%);
-    width: 44px; height: 5px; border-radius: 3px; background: #3a4150;
-  }
-  .side-pane[data-collapsed="true"] .drawer-resize { display: none; }
-  .side-pane .drawer-tabs { top: 24px; }      /* sit below the resize handle */
   /* Mobile order entry lives in the fixed bottom bar, so the form panel is
      hidden here; the drawer holds only Tape + History. */
   .side-pane > .trade-panel { display: none; }
@@ -347,6 +358,17 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
      descendant selector outranks the base `.overlay-launcher` rule (defined
      later in the file) so the width override actually wins. */
   .overlay-launchers .overlay-launcher { width: 36px; height: 36px; }
+  /* Indicator/Tools popovers hug their widest label instead of a fixed min-width.
+     Descendant selector outranks the base `.overlay-panel` rule (defined later in
+     the file) so the override actually wins. */
+  .overlay-launchers .overlay-panel { min-width: max-content; }
+  /* No top-center "place horizontal line" banner on phones — it's just noise. */
+  .arm-hint { display: none !important; }
+  /* Kill focus outlines / tap highlights on every field (keeps the .bad border). */
+  input, select, textarea, button, .dd-trigger { -webkit-tap-highlight-color: transparent; }
+  input:focus, select:focus, textarea:focus, button:focus, .dd-trigger:focus,
+  input:focus-visible, select:focus-visible, textarea:focus-visible,
+  button:focus-visible, .dd-trigger:focus-visible { outline: none; box-shadow: none; }
   .controls-center button { min-width: 64px; padding: 8px 12px; }
   .chart-toolbar { flex-wrap: wrap; }
   .drawer-toggle { display: none; }
@@ -374,10 +396,23 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
   /* Chart container should never lose touch gestures to native scroll */
   #chart { touch-action: none; }
 
-  /* Replay controls row under the chart — centered, just smaller on mobile. */
-  .chart-pane .controls { gap: 6px; padding: 5px 8px; }
-  .chart-pane .controls-left, .chart-pane .controls-center { padding: 3px 6px; gap: 6px; }
-  .chart-pane .controls-center button { min-width: 0; padding: 6px 9px; }
+  /* Replay controls row under the chart — tight on mobile. Drop the "Speed"
+     word (the dropdown speaks for itself) and shrink the transport icons. */
+  .chart-pane .controls { gap: 6px; padding: 0 8px; border-top: 0; align-items: center; justify-content: center; }
+  /* Flatten the group wrappers vertically (drop their border + vertical padding,
+     keep the subtle rounded background) so the row is exactly the 25px button
+     height. */
+  .chart-pane .controls-left, .chart-pane .controls-center { padding: 0 4px; gap: 4px; border: 0; }
+  .speed-cap { display: none; }
+  .controls-left label { gap: 0; }
+  /* 22px square transport buttons; the global 36px touch min-height is relaxed. */
+  .chart-pane .controls button { min-height: 0; }
+  .chart-pane .controls-center .icon-btn { width: 22px; height: 22px; min-width: 0; padding: 0; }
+  .chart-pane .controls-center .icon-btn svg { width: 15px; height: 15px; }
+  .chart-pane .mode-pill { padding: 0; border: 0; height: 22px; }
+  .chart-pane .mode-pill button { width: 22px; height: 22px; padding: 0; justify-content: center; }
+  /* Speed dropdown trigger also sits in this row — match the 22px height. */
+  .chart-pane .controls .dd-trigger { min-height: 22px; padding: 1px 8px; }
 
   /* Keep trade-form labels (e.g. "Side for picks") on one line; let the
      adjacent control flex into the remaining width instead of forcing the
@@ -455,8 +490,26 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .hline-popup button { background: transparent; border: 1px solid transparent; border-radius: 5px; cursor: pointer; color: #b0b6c0; padding: 4px; display: inline-flex; align-items: center; justify-content: center; }
 .hline-popup button:hover { background: #2a2e39; color: #e6e9ee; }
 .hline-popup .hp-color { width: 24px; height: 24px; padding: 0; border: 1px solid #2a2e39; border-radius: 5px; background: #1e222d; cursor: pointer; }
-.hline-popup .hp-color::-webkit-color-swatch-wrapper { padding: 2px; }
-.hline-popup .hp-color::-webkit-color-swatch { border: none; border-radius: 3px; }
+.hline-popup .hp-color.active { border-color: #ffb74d; }
+/* drawn HSV picker dropped below the h-line popup's color chip */
+.hp-picker {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 70;
+  background: #161a22; border: 1px solid #232936; border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.55);
+  padding: 8px; display: flex; flex-direction: column; gap: 8px;
+  touch-action: none; animation: usermenu-pop 0.1s ease-out;
+}
+.hp-sb { position: relative; width: 168px; height: 110px; border-radius: 5px; cursor: crosshair; }
+.hp-hue {
+  position: relative; width: 168px; height: 14px; border-radius: 7px; cursor: ew-resize;
+  background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+.hp-thumb {
+  position: absolute; width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,0.5);
+  transform: translate(-50%, -50%); pointer-events: none;
+}
+.hp-hue-thumb { top: 50%; }
 .hp-widths { display: inline-flex; gap: 2px; }
 .hp-w { width: 24px; height: 24px; }
 .hp-w span { display: block; width: 14px; background: currentColor; border-radius: 1px; }
@@ -467,7 +520,9 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .hp-del:hover { background: rgba(239,83,80,0.16) !important; color: #ef5350 !important; }
 /* order-line tap popup (mobile): edit qty / add SL·TP / close */
 .order-popup .op-qty { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #b0b6c0; }
-.order-popup .op-qty input { width: 64px; background: #1e222d; border: 1px solid #2a2e39; border-radius: 5px; color: #e6e9ee; padding: 4px 6px; font-size: 12px; }
+/* Qty / SL% / TP% fields hug their digits (field-sizing, Chromium 123+); the
+   width fallback keeps them compact on older engines, the max-width caps long qtys. */
+.order-popup .op-qty input { field-sizing: content; width: auto; min-width: 16px; max-width: 80px; background: #1e222d; border: 1px solid #2a2e39; border-radius: 5px; color: #e6e9ee; padding: 4px 5px; font-size: 12px; }
 /* no spinner steppers on the chart popup's number fields (Qty, SL %, TP %) */
 .order-popup input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 .order-popup input[type=number]::-webkit-outer-spin-button,
@@ -484,17 +539,6 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
    chart (see app.js relayoutSubPanes), so there are no separate sub-pane divs. */
 .chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
 #chart { flex: 1; min-height: 0; }
-/* Fat overlay grab-strips over each indicator-pane separator (positioned in JS,
-   see positionPaneHandles). Wider hit area than LWC's own 1px separator. */
-.pane-resize {
-  position: absolute; left: 0; right: 0; height: 16px; z-index: 30;
-  display: none; cursor: ns-resize; touch-action: none;
-}
-.pane-resize::before {
-  content: ""; position: absolute; left: 50%; top: 50%;
-  transform: translate(-50%, -50%);
-  width: 44px; height: 4px; border-radius: 3px; background: #3a4150;
-}
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
 #chart.hline-hover, #chart.hline-hover canvas { cursor: row-resize !important; }
 /* drawer resize handle: mobile-only (shown in the media query); hidden on
@@ -672,12 +716,23 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     background: #0b0e13; border-top: 1px solid #1e222d;
   }
   .mtb-toggles { display: flex; gap: 6px; align-items: center; justify-content: center; }
+  /* SL/TP percent field: the bordered box wraps the number + a "%" suffix so
+     it's unmistakably a percentage. */
+  .mtb-pct-wrap {
+    display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box;
+    background: #161a22; border: 1px solid #3a4150; border-radius: 6px;
+    min-height: 24px; padding: 0 4px; cursor: text;
+  }
   .mtb-pct {
-    width: 52px; min-width: 0; box-sizing: border-box;
-    background: #161a22; border: 1px solid #2a2e39; border-radius: 6px;
-    color: #e6e9ee; font-size: 11px; padding: 2px 6px; min-height: 22px;
+    /* hug the digits (field-sizing, Chromium 123+) so "1%" reads tight and
+       centered; fixed-width fallback caps it on older engines. */
+    field-sizing: content; width: 16px; min-width: 8px; max-width: 34px;
+    box-sizing: content-box;
+    background: transparent; border: 0; padding: 2px 0;
+    color: #ffffff; font-size: 13px; font-weight: 700;
     text-align: center; font-variant-numeric: tabular-nums;
   }
+  .mtb-pct-suffix { color: #ffffff; font-size: 12px; font-weight: 700; }
   .mtb-chip {
     flex: 0 0 auto; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
     color: #8a93a3; background: #161a22; border: 1px solid #2a2e39;
@@ -747,11 +802,11 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
     gap: 0; background: #0a0d12; border: 1px solid #20262f;
     border-radius: 12px; padding: 2px 6px; box-shadow: 0 2px 9px rgba(0,0,0,0.55);
   }
-  .mtb-lots-head { font-size: 9px; color: #8a93a3; display: inline-flex; align-items: center; gap: 3px; }
+  .mtb-lots-head { font-size: 10px; color: #ffffff; display: inline-flex; align-items: center; gap: 3px; }
   .mtb-caret { font-size: 9px; opacity: 0.8; }
   .mtb-lots > input {
     width: 100%; text-align: center; background: transparent; border: 0;
-    color: #f3f5f8; font-size: 14px; font-weight: 700; min-width: 0;
+    color: #ffffff; font-size: 17px; font-weight: 700; min-width: 0;
     font-variant-numeric: tabular-nums;
   }
   /* no spinner steppers on the bar's number fields (Lots, SL/TP %) */

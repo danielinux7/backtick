@@ -8,7 +8,7 @@
 // Bump on every meaningful frontend release — the install handler precaches
 // under this key and activate evicts older keys, so visitors get the new
 // assets on the next load.
-const CACHE_VERSION = "444774a52a";
+const CACHE_VERSION = "dd100571bf";
 const CACHE = `backtick-shell-${CACHE_VERSION}`;
 const SHELL = [
   "/",

@@ -60,7 +60,11 @@
   const H_SCROLL = { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true };
   const chart = LightweightCharts.createChart(chartEl, {
     autoSize: true,
-    layout: { background: { color: "#131722" }, textColor: "#d1d4dc", attributionLogo: false },
+    layout: {
+      background: { color: "#131722" }, textColor: "#d1d4dc", attributionLogo: false,
+      // Themed native pane separator (drag to resize indicator sub-panes).
+      panes: { enableResize: true, separatorColor: "#2a2e39", separatorHoverColor: "#3a4150" },
+    },
     grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
     timeScale: {
       timeVisible: true, secondsVisible: false, borderColor: "#2a2e39",
@@ -78,6 +82,11 @@
     handleScale: H_SCALE,
     handleScroll: H_SCROLL,
   });
+  // On phones, shrink the axis label font so the right price scale and the
+  // time-axis row eat less of the limited screen.
+  if (window.matchMedia("(max-width: 900px)").matches) {
+    chart.applyOptions({ layout: { fontSize: 9 } });
+  }
   // Freeze the chart while dragging a price line. Toggling the chart options off
   // stops LWC's own pan handling for both mouse and touch (stopPropagation alone
   // doesn't, because LWC's touch path uses its own listeners).
@@ -117,70 +126,15 @@
   let rsiSeries = null, cvdSeries = null;
   let rsiData = [], cvdData = [];
   let rsiVisible = false, cvdVisible = false;
-  const paneHeights = [];        // per-pane override in px (index 1 = first sub-pane)
 
+  // Give each indicator sub-pane a sensible default height. Resizing is handled by
+  // lightweight-charts' built-in separator drag (layout.panes.enableResize) — we
+  // just theme that separator (see createChart) so it's visible on the dark UI.
   const applyPaneHeights = () => {
     try {
       const panes = chart.panes();
-      for (let i = 1; i < panes.length; i++) panes[i].setHeight(paneHeights[i] ?? SUBPANE_HEIGHT);
+      for (let i = 1; i < panes.length; i++) panes[i].setHeight(SUBPANE_HEIGHT);
     } catch (_) {}
-  };
-
-  // ---- Fat, touch-friendly resize handles over each indicator-pane boundary.
-  // lightweight-charts' own pane separators are a ~1px target; these overlay
-  // strips give a big grab area and persist the dragged height in paneHeights so
-  // a relayout (toggling another indicator) doesn't reset it.
-  const chartStack = chartEl.parentElement;   // .chart-stack (position: relative)
-  const paneHandles = [];
-  const wirePaneHandle = (h) => {
-    h.addEventListener("pointerdown", (e) => {
-      const paneIdx = parseInt(h.dataset.pane || "0", 10);
-      let panes;
-      try { panes = chart.panes(); } catch (_) { return; }
-      if (!paneIdx || paneIdx >= panes.length) return;
-      e.preventDefault();
-      try { h.setPointerCapture(e.pointerId); } catch (_) {}
-      const startY = e.clientY;
-      const startH = panes[paneIdx].getHeight();
-      const maxH = Math.max(80, chartEl.clientHeight * 0.6);
-      const onMove = (ev) => {
-        const newH = Math.max(60, Math.min(maxH, startH + (startY - ev.clientY)));  // drag up = taller
-        paneHeights[paneIdx] = newH;
-        try { chart.panes()[paneIdx].setHeight(newH); } catch (_) {}
-        positionPaneHandles();
-      };
-      const onUp = () => {
-        h.removeEventListener("pointermove", onMove);
-        h.removeEventListener("pointerup", onUp);
-        h.removeEventListener("pointercancel", onUp);
-      };
-      h.addEventListener("pointermove", onMove);
-      h.addEventListener("pointerup", onUp);
-      h.addEventListener("pointercancel", onUp);
-    });
-  };
-  const positionPaneHandles = () => {
-    let panes;
-    try { panes = chart.panes(); } catch (_) { return; }
-    const count = Math.max(0, panes.length - 1);   // one handle per sub-pane top edge
-    while (paneHandles.length < count) {
-      const h = document.createElement("div");
-      h.className = "pane-resize";
-      wirePaneHandle(h);
-      chartStack.appendChild(h);
-      paneHandles.push(h);
-    }
-    const top0 = chartEl.offsetTop;
-    let y = 0;
-    for (let i = 0; i < paneHandles.length; i++) {
-      const h = paneHandles[i];
-      const paneIdx = i + 1;
-      if (paneIdx >= panes.length) { h.style.display = "none"; continue; }
-      y += panes[i].getHeight();              // boundary above paneIdx (+~1px separators)
-      h.style.display = "block";
-      h.dataset.pane = String(paneIdx);
-      h.style.top = `${top0 + y + i - 8}px`;  // center the 16px strip on the boundary
-    }
   };
 
   const relayoutSubPanes = () => {
@@ -196,10 +150,8 @@
       cvdSeries.setData(cvdData);
     }
     applyPaneHeights();
-    positionPaneHandles();
-    requestAnimationFrame(() => { applyPaneHeights(); positionPaneHandles(); });
+    requestAnimationFrame(applyPaneHeights);
   };
-  if (window.ResizeObserver) new ResizeObserver(() => positionPaneHandles()).observe(chartEl);
   const showRsi = (visible) => { if (visible !== rsiVisible) { rsiVisible = visible; relayoutSubPanes(); } };
   const showCvd = (visible) => { if (visible !== cvdVisible) { cvdVisible = visible; relayoutSubPanes(); } };
 
@@ -617,25 +569,28 @@
       menu.appendChild(logout);
     }
 
-    // Install app — only when the PWA layer reports it's installable. pwa.js
-    // owns the prompt; clicking this item with [data-action="install"] is
-    // picked up by its delegated handler.
-    const inst = window.__installState;
-    if (inst && !inst.standalone && (inst.available || inst.iosHint)) {
-      const item = document.createElement("button");
-      item.type = "button";
-      item.className = "user-menu-item";
-      item.dataset.action = "install";
-      item.textContent = inst.iosHint ? "Add to Home Screen" : "Install app";
-      item.addEventListener("click", () => { closeUserMenu(menu); });
-      menu.appendChild(item);
-    }
-
     avatar.addEventListener("click", (e) => {
       e.stopPropagation();
       if (menu.hidden) openUserMenu(menu);
       else closeUserMenu(menu);
     });
+
+    // Install app — a download icon sitting next to the avatar (not buried in the
+    // menu). pwa.js owns the prompt; its delegated [data-action="install"] handler
+    // picks up the click. Only shown when the PWA layer reports it's installable.
+    const inst = window.__installState;
+    if (inst && !inst.standalone && (inst.available || inst.iosHint)) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "install-btn";
+      btn.dataset.action = "install";
+      btn.title = inst.iosHint ? "Add to Home Screen" : "Install app";
+      btn.setAttribute("aria-label", btn.title);
+      btn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+        '<path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 21h14"/></svg>';
+      slot.appendChild(btn);
+    }
 
     slot.appendChild(avatar);
     slot.appendChild(menu);
@@ -1515,7 +1470,7 @@
 
   const refreshActiveIndicators = () => {
     // re-fetch only what's currently visible — backend has fresh live data buffered
-    if (document.querySelector('.ind[data-kind="cvd"]:checked')) {
+    if (indActive("cvd")) {
       cvdLastCursor = null; fetchCvd();
     }
     if (volumeProfile) { volProfileLastKey = null; fetchVolProfile(); }
@@ -2216,6 +2171,94 @@
   const closeHlinePopup = () => {
     if (hlinePopupEl) { hlinePopupEl.remove(); hlinePopupEl = null; }
   };
+
+  // ---- Custom color picker (hue strip + saturation/brightness box) for h-lines.
+  // Pure DOM/CSS, no native <input type=color> dialog — looks consistent with the
+  // rest of the app and works the same on mobile.
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const hexToRgb = (hex) => {
+    const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hex || "");
+    return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [144, 202, 249];
+  };
+  const rgbToHex = (r, g, b) =>
+    "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+  const rgbToHsv = (r, g, b) => {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let h = 0;
+    if (d) {
+      if (mx === r) h = ((g - b) / d) % 6;
+      else if (mx === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60; if (h < 0) h += 360;
+    }
+    return [h, mx ? d / mx : 0, mx];
+  };
+  const hsvToRgb = (h, s, v) => {
+    const c = v * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+    let r, g, b;
+    if (h < 60) [r, g, b] = [c, x, 0];
+    else if (h < 120) [r, g, b] = [x, c, 0];
+    else if (h < 180) [r, g, b] = [0, c, x];
+    else if (h < 240) [r, g, b] = [0, x, c];
+    else if (h < 300) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+    return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+  };
+  const hexToHsv = (hex) => rgbToHsv(...hexToRgb(hex));
+  const hsvToHex = (h, s, v) => rgbToHex(...hsvToRgb(h, s, v));
+
+  const buildColorPicker = (hex, onChange) => {
+    let [h, s, v] = hexToHsv(hex);
+    const wrap = document.createElement("div");
+    wrap.className = "hp-picker";
+    const sb = document.createElement("div");
+    sb.className = "hp-sb";
+    const sbThumb = document.createElement("div");
+    sbThumb.className = "hp-thumb";
+    sb.appendChild(sbThumb);
+    const hue = document.createElement("div");
+    hue.className = "hp-hue";
+    const hueThumb = document.createElement("div");
+    hueThumb.className = "hp-thumb hp-hue-thumb";
+    hue.appendChild(hueThumb);
+    wrap.append(sb, hue);
+
+    const render = () => {
+      sb.style.background =
+        `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${h}, 100%, 50%))`;
+      sbThumb.style.left = `${s * 100}%`;
+      sbThumb.style.top = `${(1 - v) * 100}%`;
+      hueThumb.style.left = `${(h / 360) * 100}%`;
+      const out = hsvToHex(h, s, v);
+      sbThumb.style.background = out;
+      onChange(out);
+    };
+    const wireDrag = (el, fn) => {
+      const move = (ev) => {
+        const r = el.getBoundingClientRect();
+        fn(clamp01((ev.clientX - r.left) / r.width), clamp01((ev.clientY - r.top) / r.height));
+        render();
+      };
+      el.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        try { el.setPointerCapture(ev.pointerId); } catch (_) {}
+        move(ev);
+        const up = () => {
+          el.removeEventListener("pointermove", move);
+          el.removeEventListener("pointerup", up);
+          el.removeEventListener("pointercancel", up);
+        };
+        el.addEventListener("pointermove", move);
+        el.addEventListener("pointerup", up);
+        el.addEventListener("pointercancel", up);
+      });
+    };
+    wireDrag(sb, (x, y) => { s = x; v = 1 - y; });
+    wireDrag(hue, (x) => { h = x * 360; });
+    render();
+    return wrap;
+  };
   const openHlinePopup = (h, evt) => {
     closeHlinePopup();
     const stack = $(".chart-stack");
@@ -2227,10 +2270,22 @@
     pop.style.left = `${Math.max(8, Math.min(x - 96, rect.width - 200))}px`;
     pop.style.top = `${Math.max(8, ly - 46)}px`;
 
-    const color = document.createElement("input");
-    color.type = "color"; color.value = h.color; color.title = "Color";
-    color.className = "hp-color";
-    color.addEventListener("input", () => updateHline(h, { color: color.value }));
+    // Color chip — shows the current color; tapping toggles the custom picker,
+    // which lives inside this popup so the outside-click dismissal leaves it open.
+    const color = document.createElement("button");
+    color.type = "button"; color.className = "hp-color"; color.title = "Color";
+    color.style.background = h.color;
+    let picker = null;
+    color.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (picker) { picker.remove(); picker = null; color.classList.remove("active"); return; }
+      picker = buildColorPicker(h.color, (hex) => {
+        updateHline(h, { color: hex });
+        color.style.background = hex;
+      });
+      color.classList.add("active");
+      pop.appendChild(picker);
+    });
 
     const widths = document.createElement("div");
     widths.className = "hp-widths";
