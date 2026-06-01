@@ -85,6 +85,20 @@ async def logout(request: Request, db: AsyncSession = Depends(get_db)) -> JSONRe
     return resp
 
 
+def _google_configured() -> bool:
+    """Side-effect-free check (unlike _ensure_google_registered, which also
+    registers the client) — used by /providers to decide button visibility."""
+    return bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
+
+
+@router.get("/providers")
+async def providers() -> dict:
+    """Which OAuth providers this server has configured, so the frontend hides
+    buttons that would otherwise just 503. Public — it reflects server config,
+    not the visitor's identity."""
+    return {"google": _google_configured(), "apple": _apple_enabled()}
+
+
 @router.get("/me")
 async def me(user: User = Depends(current_user)) -> dict:
     guest = is_guest(user)

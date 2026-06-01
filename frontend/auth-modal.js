@@ -20,6 +20,24 @@
   let mode = "login";          // "login" | "register"
   let isGuest = false;         // populated each time the modal opens
   let lastFocus = null;
+  let providers = null;        // {google, apple} — fetched once, then cached
+
+  // Hide OAuth buttons (and the "or" divider) for providers the server hasn't
+  // configured, so we never show a button that just 503s. Email auth always
+  // stays. Cached after the first fetch.
+  async function applyProviders() {
+    if (!providers) {
+      providers = await fetch("/api/auth/providers", { credentials: "include" })
+        .then((r) => (r.ok ? r.json() : {}))
+        .catch(() => ({}));
+    }
+    const g = document.querySelector("#auth-modal .google-btn");
+    const a = document.querySelector("#auth-modal .apple-btn");
+    if (g) g.hidden = !providers.google;
+    if (a) a.hidden = !providers.apple;
+    const div = document.getElementById("m-oauth-divider");
+    if (div) div.hidden = !(providers.google || providers.apple);
+  }
 
   function render() {
     if (mode === "login") {
@@ -55,6 +73,7 @@
 
   async function open(initialMode = "login") {
     await refreshGuestFlag();
+    await applyProviders();
     mode = initialMode;
     errEl.textContent = "";
     email.value = "";

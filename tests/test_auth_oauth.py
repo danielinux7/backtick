@@ -90,3 +90,38 @@ def test_apple_disabled_without_full_config(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     from backend.routes_auth import _apple_enabled
     assert _apple_enabled() is False
+
+
+# ---- GET /api/auth/providers (drives frontend button visibility) ----------
+# Public route, no DB/auth deps, so we hit it over the real app via ASGI.
+
+_OAUTH_ENV = ("APPLE_CLIENT_ID", "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY",
+              "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET")
+
+
+async def _get_providers():
+    from httpx import ASGITransport, AsyncClient
+    from backend import main
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        r = await c.get("/api/auth/providers")
+    assert r.status_code == 200
+    return r.json()
+
+
+@pytest.mark.asyncio
+async def test_providers_reports_unconfigured(monkeypatch):
+    for k in _OAUTH_ENV:
+        monkeypatch.delenv(k, raising=False)
+    assert await _get_providers() == {"google": False, "apple": False}
+
+
+@pytest.mark.asyncio
+async def test_providers_reports_apple_enabled(monkeypatch):
+    monkeypatch.setenv("APPLE_CLIENT_ID", "com.backtick.web")
+    monkeypatch.setenv("APPLE_TEAM_ID", "TEAM123456")
+    monkeypatch.setenv("APPLE_KEY_ID", "KEY1234567")
+    monkeypatch.setenv("APPLE_PRIVATE_KEY", "pem")
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+    assert await _get_providers() == {"google": False, "apple": True}
