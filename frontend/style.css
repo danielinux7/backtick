@@ -91,6 +91,9 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 }
 .install-btn:hover { color: #26a69a; border-color: #3a4255; background: #1e222d; }
 .install-btn svg { display: block; }
+/* Installing to the home screen only makes sense on a phone; desktop Chrome
+   also fires beforeinstallprompt, so hide the button above the mobile width. */
+@media (min-width: 901px) { .install-btn { display: none; } }
 .user-menu {
   position: absolute; top: calc(100% + 6px); right: 0;
   min-width: 220px; max-width: 280px;
