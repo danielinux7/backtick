@@ -43,6 +43,10 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.4px; font-size: 14px; }
 .brand .logo { width: 24px; height: 24px; flex-shrink: 0; }
 .brand span { background: linear-gradient(120deg, #26a69a, #4dd0c1); -webkit-background-clip: text; background-clip: text; color: transparent; }
+/* Header brand: the boot-splash glyph, shrunk down, sitting left of the setup
+   row on desktop. Hidden on mobile (the setup strip reclaims that space). */
+#header-brand { flex: 0 0 auto; }
+#header-brand .logo { width: 30px; height: 30px; filter: drop-shadow(0 1px 4px rgba(38, 166, 154, 0.30)); }
 .setup { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .setup input, .setup select, .setup button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 8px; }
 .setup button { cursor: pointer; background: #2962ff; border-color: #2962ff; }
@@ -315,9 +319,9 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
     row-gap: 6px;
   }
   /* Single row: the live/replay setup strip on the left, avatar pinned right.
-     The brand/logo that used to sit here now lives on the boot splash, so the
-     setup controls reclaim that otherwise-empty header row instead of being
-     forced onto a second line. */
+     The header brand logo is desktop-only, so the setup controls reclaim that
+     otherwise-empty header row instead of being forced onto a second line. */
+  #header-brand { display: none; }
   .setup     { order: 0; flex: 1 1 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; }
   .user-info { order: 1; flex: 0 0 auto; width: auto; margin-left: auto; padding-top: 0; border-top: 0; align-self: center; }
   .setup > * { flex: 0 1 auto; min-width: 0; }
