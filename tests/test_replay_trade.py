@@ -7,7 +7,16 @@ snapshot round-trip.
 import pandas as pd
 import pytest
 
+from backend import replay
 from backend.replay import Session, Trade
+
+
+@pytest.fixture(autouse=True)
+def _no_minute_klines(monkeypatch):
+    """process_candle now refines fill times from 1m klines; stub the fetch so
+    these offline tests fall back to the candle-open time (no network)."""
+    monkeypatch.setattr(replay, "fetch_klines",
+                        lambda *a, **k: pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"]))
 
 
 def make_session(o, h, l, c, trades=None):

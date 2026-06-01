@@ -133,6 +133,9 @@ class Session:
     # lands on the same bar: {symbol: {"start", "end", "cursor_time"}}.
     # Replay only — live is always pinned to the latest candle.
     symbol_views: dict = field(default_factory=dict)
+    # cache of 1m klines per candle (keyed by candle open time), used to pin
+    # the precise within-candle minute a replay limit/SL/TP filled. Not persisted.
+    minute_cache: dict = field(default_factory=dict)
 
     def candles_so_far(self) -> list[dict]:
         sub = self.df.iloc[: self.cursor + 1]
@@ -194,6 +197,58 @@ class Session:
         if self.tick_aggs is not None and self.tick_idx > 0:
             return int(self.tick_aggs.iloc[self.tick_idx - 1]["time_ms"] // 1000)
         return int(self.df["time"].iloc[self.cursor])
+
+    def cursor_anchor_time(self) -> int:
+        """The replay 'now', used to pin the cursor across tf/symbol switches and
+        to time-stamp market entries / manual closes. Unlike current_time (the
+        candle OPEN, which the tape needs), this is the END of the revealed
+        candle: a market trade on a 4h 12–16 bar maps to the 15–16 bar on 1h,
+        and dropping tf reveals through that last sub-candle. Tick/live keep the
+        exact tick time."""
+        if self.tick_aggs is not None and self.tick_idx > 0:
+            return int(self.tick_aggs.iloc[self.tick_idx - 1]["time_ms"] // 1000)
+        base = int(self.df["time"].iloc[self.cursor])
+        if self.is_live:
+            return base
+        return base + TF_MS[self.tf] // 1000 - 1
+
+    def _minute_klines(self, candle_open: int):
+        """1m klines inside the candle opening at `candle_open`, cached. None
+        when there's nothing finer to refine with (already 1m, or live)."""
+        if self.is_live or self.tf == "1m":
+            return None
+        if candle_open in self.minute_cache:
+            return self.minute_cache[candle_open]
+        tf_s = TF_MS[self.tf] // 1000
+        s = dt.datetime.fromtimestamp(candle_open, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        e = dt.datetime.fromtimestamp(candle_open + tf_s, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        try:
+            m = fetch_klines(self.symbol, "1m", s, e, market=self.market)
+        except Exception:
+            m = None
+        if m is not None and not m.empty:
+            m = m[(m["time"] >= candle_open) & (m["time"] < candle_open + tf_s)].reset_index(drop=True)
+        self.minute_cache[candle_open] = m if (m is not None and not m.empty) else None
+        return self.minute_cache[candle_open]
+
+    def _refine_time(self, candle_open: int, level: float, side: str, kind: str) -> int:
+        """Precise unix-second the candle's price first crossed `level` (limit
+        fill / SL / TP), found from 1m klines. Falls back to candle_open when no
+        finer data is available — so outcomes are unchanged, only the timestamp
+        is sharpened (mapping correctly on lower timeframes, like live)."""
+        m = self._minute_klines(candle_open)
+        if m is None:
+            return candle_open
+        long = side == "long"
+        for r in m.itertuples(index=False):
+            hi, lo = float(r.high), float(r.low)
+            if kind == "tp":
+                crossed = (hi >= level) if long else (lo <= level)
+            else:                                   # limit fill or sl
+                crossed = (lo <= level) if long else (hi >= level)
+            if crossed:
+                return int(r.time)
+        return candle_open
 
     def modify_trade(self, tid: str, *, sl=None, tp=None,
                      limit_price=None, qty=None,
@@ -315,7 +370,7 @@ class Session:
                 self.reset_tick_state()         # no ticks for this candle — candle level
                 break
             self.tick_idx = len(self.tick_aggs)
-        self.rewind_trades(self.current_time())
+        self.rewind_trades(self.cursor_anchor_time())
 
     def step_tick(self, n: int) -> tuple[list[dict], list[Trade]]:
         """Reveal the next n aggTrades, processing limits / SL / TP per tick.
@@ -429,7 +484,8 @@ class Session:
             # the cursor index can go stale vs a re-fetched df (extend_history
             # prepends bars without widening start); persist its time so a cold
             # hydrate can re-derive the index instead of indexing out of bounds.
-            "cursor_time": int(self.df["time"].iloc[self.cursor]) if len(self.df) else None,
+            # Anchor on the candle END so a finer-tf hydrate reveals through it.
+            "cursor_time": self.cursor_anchor_time() if len(self.df) else None,
             "is_live": bool(self.is_live),
             "trades": [t.to_dict() for t in self.trades],
             "client_state": self.client_state,
@@ -494,7 +550,7 @@ class Session:
                     entry = t.limit_price
             if entry is not None:
                 t.status = "open"
-                t.entry_time = rt
+                t.entry_time = self._refine_time(rt, t.limit_price, t.side, "limit")
                 t.entry_price = entry
                 just_filled.add(t.id)
                 changed.append(t)
@@ -528,7 +584,8 @@ class Session:
                     hit_price, reason = t.tp, "tp"
             if hit_price is not None:
                 t.status = "closed"
-                t.exit_time = rt
+                level = t.sl if reason == "sl" else t.tp
+                t.exit_time = self._refine_time(rt, level, t.side, reason)
                 t.exit_price = hit_price
                 t.exit_reason = reason
                 changed.append(t)
@@ -630,7 +687,7 @@ class SessionStore:
                 # remember where we're leaving the outgoing symbol
                 sess.symbol_views[sess.symbol] = {
                     "start": sess.start, "end": sess.end,
-                    "cursor_time": sess.current_time(),
+                    "cursor_time": sess.cursor_anchor_time(),
                 }
             if sess.is_live:
                 df, cursor = _live_window_df(symbol, sess.market, tf, warmup)
@@ -642,7 +699,10 @@ class SessionStore:
                     df = fetch_klines(symbol, tf, new_start, new_end, market=sess.market)
                     if df.empty:
                         raise ValueError("no candles returned for that range")
-                    idx = int(df["time"].searchsorted(int(saved.get("cursor_time", 0)), side="left"))
+                    # map the anchor time to the candle that CONTAINS it
+                    # (largest open <= anchor), so a 4h end-time lands on the
+                    # right finer bar rather than overshooting to the next.
+                    idx = int(df["time"].searchsorted(int(saved.get("cursor_time", 0)), side="right")) - 1
                     cursor = max(0, min(idx, len(df) - 1))
                 else:
                     if start is None or end is None:

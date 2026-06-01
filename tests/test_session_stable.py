@@ -132,7 +132,9 @@ async def test_changing_tf_keeps_trades_and_remaps_cursor(client):
     one_h = await client.post("/api/session", json=_replay_body("SOLUSDT", tf="1h"))
     assert one_h.json()["id"] == sid
     assert one_h.json()["tf"] == "1h"
-    assert one_h.json()["current_time"] == t_before    # same point in time at the new tf
+    # dropping 4h→1h reveals THROUGH the last sub-candle: the cursor lands on the
+    # 4th hour of the 4h bar (its open + 3h), not the first hour.
+    assert one_h.json()["current_time"] == t_before + 3 * TF_SEC["1h"]
     assert len(one_h.json()["trades"]) == 1
 
 
@@ -193,9 +195,40 @@ async def test_cold_hydrate_handles_stale_cursor(monkeypatch):
     await engine.dispose()
 
 
-def test_process_candle_only_touches_active_symbol():
+def test_replay_fill_time_refined_to_the_minute(monkeypatch):
+    """A limit that fills inside a 4h candle is stamped at the minute price
+    actually crossed it (from 1m klines), not the 4h candle open — so it maps
+    to the right bar on lower timeframes."""
+    step = TF_SEC["4h"]
+    base = BASE - (BASE % step)
+
+    def fake(symbol, tf, start, end, market="spot"):
+        if tf == "1m":
+            # flat at 99 until minute 25, then dips to 90 (crosses a 95 long limit)
+            rows = [{"time": base + i * 60, "open": 99.0, "high": 99.5,
+                     "low": (90.0 if i >= 25 else 98.0), "close": 99.0, "volume": 1.0}
+                    for i in range(step // 60)]
+            return pd.DataFrame(rows)
+        return pd.DataFrame()
+
+    monkeypatch.setattr(replay, "fetch_klines", fake)
+    df = pd.DataFrame([{"time": base, "open": 99.0, "high": 99.5, "low": 90.0,
+                        "close": 99.0, "volume": 1.0}])
+    s = replay.Session(id="t", symbol="SOLUSDT", market="spot", tf="4h",
+                       start="x", end="y", df=df, cursor=0)
+    s.trades = [replay.Trade(id="L", symbol="SOLUSDT", side="long", qty=1.0,
+                             order_type="limit", created_time=base, status="pending",
+                             limit_price=95.0)]
+    s.process_candle()
+    assert s.trades[0].status == "open"
+    assert s.trades[0].entry_time == base + 25 * 60      # the crossing minute, not `base`
+
+
+def test_process_candle_only_touches_active_symbol(monkeypatch):
     """A trade tagged for another symbol must not fill/trigger on this symbol's
     candles."""
+    monkeypatch.setattr(replay, "fetch_klines",
+                        lambda *a, **k: pd.DataFrame(columns=["time", "open", "high", "low", "close", "volume"]))
     df = pd.DataFrame([
         {"time": 1000, "open": 100, "high": 100, "low": 100, "close": 100, "volume": 1.0},
         {"time": 2000, "open": 100, "high": 100, "low": 80, "close": 85, "volume": 1.0},

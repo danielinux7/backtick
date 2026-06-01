@@ -86,7 +86,8 @@ async def hydrate_session(
     # by the cursor's candle time when we have it, else clamp into range.
     ct = snap.get("cursor_time")
     if ct is not None:
-        idx = int(df["time"].searchsorted(int(ct), side="left"))
+        # map the anchor time to the candle that contains it (largest open <= ct)
+        idx = int(df["time"].searchsorted(int(ct), side="right")) - 1
         sess.cursor = max(0, min(idx, len(df) - 1))
     else:
         sess.cursor = max(0, min(sess.cursor, len(df) - 1))

@@ -390,7 +390,7 @@ async def back(
         n = max(1, min(req.n, 5000))
         sess.reset_tick_state()
         sess.cursor = max(0, sess.cursor - n)
-        sess.rewind_trades(sess.current_time())
+        sess.rewind_trades(sess.cursor_anchor_time())
     await save_snapshot(db, sess)
     return _serialize_session(sess)
 
@@ -453,7 +453,7 @@ async def place_trade(
             if req.tp is not None and req.tp >= ref_price:
                 raise HTTPException(400, "short TP must be below entry")
 
-        now_ts = int(req.at_time) if req.at_time is not None else sess.current_time()
+        now_ts = int(req.at_time) if req.at_time is not None else sess.cursor_anchor_time()
         trade = Trade(
             id=secrets.token_hex(4),
             symbol=sess.symbol,
@@ -495,7 +495,7 @@ async def close_trade(
                     sess.trades = [x for x in sess.trades if x.id != tid]
                 else:
                     t.status = "closed"
-                    t.exit_time = int(req.at_time) if req.at_time is not None else sess.current_time()
+                    t.exit_time = int(req.at_time) if req.at_time is not None else sess.cursor_anchor_time()
                     t.exit_price = float(req.at_price) if req.at_price is not None else sess.current_price()
                     t.exit_reason = "manual"
                 break
