@@ -426,6 +426,10 @@ class Session:
             "start": self.start,
             "end": self.end,
             "cursor": int(self.cursor),
+            # the cursor index can go stale vs a re-fetched df (extend_history
+            # prepends bars without widening start); persist its time so a cold
+            # hydrate can re-derive the index instead of indexing out of bounds.
+            "cursor_time": int(self.df["time"].iloc[self.cursor]) if len(self.df) else None,
             "is_live": bool(self.is_live),
             "trades": [t.to_dict() for t in self.trades],
             "client_state": self.client_state,

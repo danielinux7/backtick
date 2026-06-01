@@ -81,6 +81,15 @@ async def hydrate_session(
         is_live=bool(snap.get("is_live", False)),
     )
     sess.apply_snapshot(snap)
+    # Re-derive the cursor: the persisted index can be stale against a freshly
+    # fetched df (extend_history prepends bars without widening start), so map
+    # by the cursor's candle time when we have it, else clamp into range.
+    ct = snap.get("cursor_time")
+    if ct is not None:
+        idx = int(df["time"].searchsorted(int(ct), side="left"))
+        sess.cursor = max(0, min(idx, len(df) - 1))
+    else:
+        sess.cursor = max(0, min(sess.cursor, len(df) - 1))
     with store._lock:                # noqa: SLF001 — registering hydrated session
         store._sessions[sid] = sess  # noqa: SLF001
     return sess

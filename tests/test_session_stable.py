@@ -11,10 +11,11 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from backend import main, replay
+from backend import main, replay, snapshots
 from backend.auth import current_user
 from backend.db import Base, get_db
-from backend.models import User
+from backend.models import ReplaySnapshot, User
+from backend.snapshots import hydrate_session
 
 TEST_USER_ID = 1
 TF_SEC = {"15m": 900, "1h": 3600, "4h": 14400}
@@ -150,6 +151,46 @@ async def test_reset_clears_only_current_symbol(client):
     assert reset.json()["trades"] == []
     sol = await client.post("/api/session", json=_replay_body("SOLUSDT"))
     assert len(sol.json()["trades"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cold_hydrate_handles_stale_cursor(monkeypatch):
+    """A persisted cursor can exceed a freshly-fetched df (extend_history bumps
+    it without widening start). Cold hydrate must not index out of bounds: it
+    remaps by cursor_time when present, else clamps."""
+    monkeypatch.setattr(replay, "fetch_klines", _fake_klines)
+    monkeypatch.setattr(snapshots, "fetch_klines", _fake_klines)
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    store = replay.SessionStore()
+
+    base = BASE - (BASE % TF_SEC["4h"])
+    async with factory() as db:
+        # legacy snapshot (no cursor_time) with an out-of-range cursor
+        db.add(ReplaySnapshot(sid="legacy", user_id=1, symbol="SOLUSDT", market="spot",
+                              tf="4h", is_live=False,
+                              snapshot={"symbol": "SOLUSDT", "market": "spot", "tf": "4h",
+                                        "start": "2024-01-01", "end": "2024-06-01",
+                                        "cursor": 99999, "trades": []}))
+        # newer snapshot carrying cursor_time → remaps to that bar
+        db.add(ReplaySnapshot(sid="timed", user_id=1, symbol="SOLUSDT", market="spot",
+                              tf="4h", is_live=False,
+                              snapshot={"symbol": "SOLUSDT", "market": "spot", "tf": "4h",
+                                        "start": "2024-01-01", "end": "2024-06-01",
+                                        "cursor": 99999, "cursor_time": base + 60 * TF_SEC["4h"],
+                                        "trades": []}))
+        await db.commit()
+
+        legacy = await hydrate_session(db, store, "legacy", 1)
+        assert legacy is not None
+        assert 0 <= legacy.cursor < len(legacy.df)        # clamped, no IndexError
+        legacy.current_price()                             # must not raise
+
+        timed = await hydrate_session(db, store, "timed", 1)
+        assert timed.current_time() == base + 60 * TF_SEC["4h"]   # remapped by time
+    await engine.dispose()
 
 
 def test_process_candle_only_touches_active_symbol():
