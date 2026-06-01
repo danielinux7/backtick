@@ -254,7 +254,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 #replay-date { display: none !important; }
 body.replay-mode #replay-date { display: inline-block !important; }
 
-main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px); }
+main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: calc(100% - 56px); }
 .drawer-toggle { display: none; background: none; border: 0; color: inherit; font: inherit; }
 .drawer-tabs { display: none; }
 .mobile-toggle { display: none; }
@@ -353,6 +353,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
      drag surface (pwa.js), with a grip overlaid on its top edge between the
      tabs. This reclaims the strip's vertical space. */
   .side-pane > .drawer-resize { display: none; }
+  .side-resize { display: none; }          /* width-resize is desktop-only */
   .drawer-tabs { padding-top: 7px; }          /* room for the grip above the tabs */
   .drawer-grip {
     display: block; position: absolute; top: 3px; left: 50%;
@@ -597,7 +598,15 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 .icon-btn svg { display: block; }
 #play .play-icon[hidden], #play .pause-icon[hidden] { display: none; }
 
-.side-pane { display: flex; flex-direction: column; border-left: 1px solid #1e222d; background: #0f1218; overflow: hidden; }
+.side-pane { display: flex; flex-direction: column; border-left: 1px solid #1e222d; background: #0f1218; overflow: hidden; position: relative; }
+/* Drag the pane's left edge to resize its width (desktop). Pointer logic +
+   persistence in pwa.js. Hidden on mobile, where the pane is a bottom drawer. */
+.side-resize {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 6px; z-index: 6;
+  cursor: col-resize; touch-action: none; background: transparent;
+  transition: background 0.12s ease;
+}
+.side-resize:hover, .side-resize.dragging { background: rgba(41, 98, 255, 0.45); }
 .trade-panel, .trades-panel, .tape-panel {
   padding: 10px; border-bottom: 1px solid #1e222d;
   display: flex; flex-direction: column; min-height: 0; flex-shrink: 0;

@@ -268,6 +268,47 @@
     if (tabStrip) tabStrip.addEventListener("pointerdown", (e) => beginDrawerDrag(e, tabStrip, 6));
   }
 
+  // Desktop: drag the side pane's left edge to resize its width. The pane is the
+  // right column of the <main> grid; we drive --side-w (clamped). Persisted per
+  // device in localStorage — a viewport layout pref (screen-size dependent), not
+  // account/session state, so it intentionally doesn't sync across devices.
+  const sideHandle = document.getElementById("side-resize");
+  if (sideHandle) {
+    const MIN = 240, KEY = "backtick.sideWidth";
+    const maxW = () => Math.min(720, Math.round(window.innerWidth * 0.6));
+    const cur = () => parseInt(getComputedStyle(document.documentElement).getPropertyValue("--side-w"), 10);
+    const apply = (w) =>
+      document.documentElement.style.setProperty("--side-w", Math.round(w) + "px");
+    const saved = parseInt(localStorage.getItem(KEY) || "", 10);
+    if (saved) apply(Math.max(MIN, Math.min(saved, maxW())));
+    let id = null;
+    sideHandle.addEventListener("pointerdown", (e) => {
+      if (e.button > 0) return;
+      id = e.pointerId;
+      sideHandle.classList.add("dragging");
+      try { sideHandle.setPointerCapture(id); } catch (_) {}
+      e.preventDefault();
+    });
+    sideHandle.addEventListener("pointermove", (e) => {
+      if (id === null || e.pointerId !== id) return;
+      apply(Math.max(MIN, Math.min(window.innerWidth - e.clientX, maxW())));
+    });
+    const end = (e) => {
+      if (id === null || e.pointerId !== id) return;
+      id = null;
+      sideHandle.classList.remove("dragging");
+      const w = cur();
+      if (w) localStorage.setItem(KEY, String(w));
+    };
+    sideHandle.addEventListener("pointerup", end);
+    sideHandle.addEventListener("pointercancel", end);
+    // keep within 60% if the window shrinks
+    window.addEventListener("resize", () => {
+      const w = cur();
+      if (w) apply(Math.max(MIN, Math.min(w, maxW())));
+    });
+  }
+
   // Mobile collapsible rows — Tools (chart-toolbar) and Indicators. Tapping
   // the trigger toggles the row's .open class; tapping anywhere outside the
   // row closes it. The hide/show is pure CSS — see style.css mobile block.
