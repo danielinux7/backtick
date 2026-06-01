@@ -314,13 +314,12 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
     flex-wrap: wrap;
     row-gap: 6px;
   }
-  /* Row 1: brand left, avatar right. Row 2: setup, single horizontal strip. */
-  .brand     { order: 0; }
-  .user-info { order: 1; width: auto; margin-left: auto; padding-top: 0; border-top: 0; }
-  /* One horizontal strip, no wrap: each control sizes to its own content and
-     sits left-aligned (mode, symbol, market, tf, date) — no stretching to fill
-     the row. They may shrink if the row gets tight, but won't expand. */
-  .setup     { order: 2; flex: 1 0 100%; flex-wrap: nowrap; gap: 4px; }
+  /* Single row: the live/replay setup strip on the left, avatar pinned right.
+     The brand/logo that used to sit here now lives on the boot splash, so the
+     setup controls reclaim that otherwise-empty header row instead of being
+     forced onto a second line. */
+  .setup     { order: 0; flex: 1 1 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; }
+  .user-info { order: 1; flex: 0 0 auto; width: auto; margin-left: auto; padding-top: 0; border-top: 0; align-self: center; }
   .setup > * { flex: 0 1 auto; min-width: 0; }
   .setup > .symbol-picker > input { min-width: 0; }
   .setup .live-indicator { display: none; }
