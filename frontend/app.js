@@ -3131,9 +3131,18 @@
   (async () => {
     try { if (!(await restoreLatest())) await loadSession(); }
     finally {
-      // drop the boot splash once the first chart is in (success or failure)
+      // drop the boot splash once the first chart is in (success or failure),
+      // but hold it on screen long enough to actually register — otherwise a fast
+      // load (esp. on mobile) blinks it away before the entrance animation finishes.
       const s = document.getElementById("boot-splash");
-      if (s) { requestAnimationFrame(() => s.classList.add("hide")); setTimeout(() => s.remove(), 400); }
+      if (s) {
+        const MIN_MS = 900;
+        const wait = Math.max(0, MIN_MS - performance.now());
+        setTimeout(() => {
+          s.classList.add("hide");
+          setTimeout(() => s.remove(), 400);
+        }, wait);
+      }
     }
   })();
 })();

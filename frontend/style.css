@@ -4,13 +4,40 @@ html, body { margin: 0; padding: 0; height: 100%; background: #131722; color: #d
 /* Boot splash — full-screen logo + name shown until the first chart loads. */
 #boot-splash {
   position: fixed; inset: 0; z-index: 200;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
-  background: #0f1218; color: #d1d4dc;
-  transition: opacity 0.3s ease;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  background: radial-gradient(120% 90% at 50% 38%, #161b24 0%, #0f1218 60%, #0b0e13 100%);
+  color: #d1d4dc;
+  transition: opacity 0.35s ease;
 }
-#boot-splash .logo { width: 64px; height: 64px; }
-#boot-splash span { font-size: 22px; font-weight: 600; letter-spacing: 0.5px; background: linear-gradient(120deg, #26a69a, #4dd0c1); -webkit-background-clip: text; background-clip: text; color: transparent; }
+#boot-splash .logo {
+  width: 96px; height: 96px;
+  filter: drop-shadow(0 6px 22px rgba(38, 166, 154, 0.40));
+  animation: bt-logo-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both,
+             bt-logo-glow 2.6s ease-in-out 0.5s infinite;
+}
+#boot-splash span {
+  font-size: 26px; font-weight: 700; letter-spacing: 1px;
+  background: linear-gradient(120deg, #26a69a, #5fe0d0);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: bt-name-in 0.5s ease 0.12s both;
+}
 #boot-splash.hide { opacity: 0; pointer-events: none; }
+
+@keyframes bt-logo-in {
+  from { opacity: 0; transform: scale(0.8) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes bt-name-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes bt-logo-glow {
+  0%, 100% { filter: drop-shadow(0 6px 18px rgba(38, 166, 154, 0.30)); }
+  50%      { filter: drop-shadow(0 6px 26px rgba(38, 166, 154, 0.55)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #boot-splash .logo, #boot-splash span { animation: none; }
+}
 
 header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #0f1218; border-bottom: 1px solid #1e222d; flex-wrap: wrap; }
 .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.4px; font-size: 14px; }
