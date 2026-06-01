@@ -1367,6 +1367,10 @@
     $("#play").disabled = atEnd;
     $("#long-btn").disabled = tradingDisabled;
     $("#short-btn").disabled = tradingDisabled;
+    // Explain why the replay controls go dead at the tail of the data, so it
+    // doesn't read as a broken UI.
+    const endHint = $("#replay-end-hint");
+    if (endHint) endHint.hidden = !(atEnd && !session.is_live);
     if (atEnd && playTimer && !session.is_live) stopPlay();
 
     if (isNew) {
@@ -3131,9 +3135,18 @@
   (async () => {
     try { if (!(await restoreLatest())) await loadSession(); }
     finally {
-      // drop the boot splash once the first chart is in (success or failure)
+      // drop the boot splash once the first chart is in (success or failure),
+      // but hold it on screen long enough to actually register — otherwise a fast
+      // load (esp. on mobile) blinks it away before the entrance animation finishes.
       const s = document.getElementById("boot-splash");
-      if (s) { requestAnimationFrame(() => s.classList.add("hide")); setTimeout(() => s.remove(), 400); }
+      if (s) {
+        const MIN_MS = 900;
+        const wait = Math.max(0, MIN_MS - performance.now());
+        setTimeout(() => {
+          s.classList.add("hide");
+          setTimeout(() => s.remove(), 400);
+        }, wait);
+      }
     }
   })();
 })();

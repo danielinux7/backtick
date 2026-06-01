@@ -33,16 +33,53 @@
 </head>
 <body>
   <div id="boot-splash">
-    <svg class="logo" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="40" height="40" rx="8" fill="#0f1218"/>
-      <g transform="rotate(40 20 20)">
-        <line x1="20" y1="6" x2="20" y2="34" stroke="#26a69a" stroke-width="2" stroke-linecap="round"/>
-        <rect x="15" y="12" width="10" height="16" rx="2" fill="#26a69a"/>
+    <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="bt-body" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#6fe9da"/><stop offset="1" stop-color="#1f9488"/>
+        </linearGradient>
+        <linearGradient id="bt-tile" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#1c222d"/><stop offset="1" stop-color="#0f141b"/>
+        </linearGradient>
+        <linearGradient id="bt-border" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#46d8c6"/>
+          <stop offset="0.6" stop-color="#1c8d80" stop-opacity="0.35"/>
+          <stop offset="1" stop-color="#1c8d80" stop-opacity="0.12"/>
+        </linearGradient>
+      </defs>
+      <rect x="3" y="3" width="58" height="58" rx="16" fill="url(#bt-tile)" stroke="url(#bt-border)" stroke-width="1.5"/>
+      <g transform="rotate(38 32 32)">
+        <line x1="32" y1="12" x2="32" y2="52" stroke="#4dd0c1" stroke-width="2.6" stroke-linecap="round"/>
+        <rect x="25" y="21.5" width="14" height="21" rx="4" fill="url(#bt-body)"/>
+        <rect x="27.6" y="24.5" width="3.2" height="15" rx="1.6" fill="#ffffff" opacity="0.20"/>
       </g>
     </svg>
     <span>Backtick</span>
   </div>
   <header>
+    <div class="brand" id="header-brand" aria-label="Backtick">
+      <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="hb-body" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#6fe9da"/><stop offset="1" stop-color="#1f9488"/>
+          </linearGradient>
+          <linearGradient id="hb-tile" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#1c222d"/><stop offset="1" stop-color="#0f141b"/>
+          </linearGradient>
+          <linearGradient id="hb-border" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#46d8c6"/>
+            <stop offset="0.6" stop-color="#1c8d80" stop-opacity="0.35"/>
+            <stop offset="1" stop-color="#1c8d80" stop-opacity="0.12"/>
+          </linearGradient>
+        </defs>
+        <rect x="3" y="3" width="58" height="58" rx="16" fill="url(#hb-tile)" stroke="url(#hb-border)" stroke-width="1.5"/>
+        <g transform="rotate(38 32 32)">
+          <line x1="32" y1="12" x2="32" y2="52" stroke="#4dd0c1" stroke-width="2.6" stroke-linecap="round"/>
+          <rect x="25" y="21.5" width="14" height="21" rx="4" fill="url(#hb-body)"/>
+          <rect x="27.6" y="24.5" width="3.2" height="15" rx="1.6" fill="#ffffff" opacity="0.20"/>
+        </g>
+      </svg>
+    </div>
     <form id="setup-form" class="setup">
       <select name="mode" id="mode-select" title="Replay = historical chart; Live = real-time Binance stream">
         <option value="live" selected>Live</option>
@@ -79,6 +116,7 @@
         <div id="chart"></div>
         <div id="arm-hint" class="arm-hint" style="display:none"></div>
         <span id="measure-summary" class="measure-readout"></span>
+        <div id="replay-end-hint" class="replay-end-hint" hidden>Replay reached the latest candle — step back (◀) or pick a new start date to keep trading.</div>
 
         <div class="overlay-launchers">
           <button type="button" id="cursor-tool" class="overlay-launcher active" title="Cursor — cancel active tool" aria-label="Cursor">
