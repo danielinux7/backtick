@@ -233,7 +233,7 @@ async def create_session(
             if sess is None:
                 sess = _fresh(key_row.sid)
             else:
-                sess.trades = [t for t in sess.trades if t.symbol != symbol]
+                sess.trades = []          # date jump → start this symbol clean
                 store.set_view(sess, symbol, req.tf, start=req.start, end=req.end,
                                replay_ts=req.replay_ts, warmup=req.warmup, fresh=True)
             created = True
@@ -244,8 +244,14 @@ async def create_session(
                 created = True
             else:
                 if (sess.symbol, sess.tf) != (symbol, req.tf):
+                    # symbol change clears replay trades; a TF change keeps + remaps
                     store.set_view(sess, symbol, req.tf, start=req.start, end=req.end,
                                    replay_ts=req.replay_ts, warmup=req.warmup)
+                elif not sess.is_live and sess.trades:
+                    # resuming the IDENTICAL replay view → we got here via a mode
+                    # (replay↔live) or market (spot/futures) flip, or a redundant
+                    # load. Replay trades don't carry across those — start clean.
+                    sess.trades = []
                 created = False
         else:
             sess = _fresh(None)
@@ -282,6 +288,11 @@ async def latest_session(
     sess = await hydrate_session(db, store, row.sid, user.id)
     if sess is None:
         return Response(status_code=204)
+    # Replay trades are ephemeral: a reload restores the view (symbol/date/cursor)
+    # but starts with an empty trade list, even if the session is still warm
+    # in memory. Live positions are real and stay.
+    if not sess.is_live and sess.trades:
+        sess.trades = []
     return _serialize_session(sess)
 
 

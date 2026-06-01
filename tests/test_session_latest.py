@@ -71,10 +71,14 @@ async def test_latest_returns_most_recently_updated_with_trades(client):
         await db.commit()
     # register both in the store so hydrate_session resolves them in-memory
     main.store._sessions["old"] = _session_obj("old", "SOLUSDT")
-    main.store._sessions["new"] = _session_obj("new", "BTCUSDT", [
+    # live session: its open positions survive the latest/reload path (replay
+    # trades are ephemeral and would come back empty)
+    new = _session_obj("new", "BTCUSDT", [
         Trade(id="t1", side="long", qty=2.0, order_type="market",
               created_time=0, status="open", entry_time=0, entry_price=100.0),
     ])
+    new.is_live = True
+    main.store._sessions["new"] = new
 
     r = await client.get("/api/session/latest")
 

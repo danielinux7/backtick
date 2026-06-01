@@ -90,20 +90,21 @@ async def test_mode_has_one_session_and_resumes(client):
     assert live.json()["id"] != replay_sid
     assert live.json()["is_live"] is True
 
-    # back to replay → same session, trade still there, not re-created
+    # back to replay → same session (not re-created), but a mode flip clears the
+    # ephemeral replay trade
     again = await client.post("/api/session", json=_replay_body())
     assert again.json()["id"] == replay_sid
     assert again.json()["created"] is False
-    assert len(again.json()["trades"]) == 1
+    assert again.json()["trades"] == []
 
 
 @pytest.mark.asyncio
-async def test_symbol_is_a_view_with_per_symbol_trades(client):
+async def test_switching_symbol_clears_replay_trades(client):
     r = await client.post("/api/session", json=_replay_body("SOLUSDT"))
     sid = r.json()["id"]
     await _place_market_long(client, sid, qty=2.0)
 
-    # switch the view to BTC — same session, BTC has no trades yet
+    # switch the view to BTC — same session, trades cleared (replay is per-symbol)
     btc = await client.post("/api/session", json=_replay_body("BTCUSDT"))
     assert btc.json()["id"] == sid
     assert btc.json()["created"] is False
@@ -111,15 +112,32 @@ async def test_symbol_is_a_view_with_per_symbol_trades(client):
     assert btc.json()["trades"] == []
     await _place_market_long(client, sid, qty=3.0)
 
-    # back to SOL → only the SOL trade shows
+    # back to SOL → its trade was dropped when we left it; starts clean
     sol = await client.post("/api/session", json=_replay_body("SOLUSDT"))
     assert sol.json()["id"] == sid
-    assert len(sol.json()["trades"]) == 1
-    assert sol.json()["trades"][0]["qty"] == 2.0
-    assert sol.json()["trades"][0]["symbol"] == "SOLUSDT"
+    assert sol.json()["trades"] == []
 
-    # both trades persist on the session object
-    assert len(main.store._sessions[sid].trades) == 2
+    # the session never accumulates other symbols' trades
+    assert main.store._sessions[sid].trades == []
+
+
+@pytest.mark.asyncio
+async def test_market_change_clears_replay_trades(client):
+    spot = await client.post("/api/session", json=_replay_body("SOLUSDT"))
+    spot_sid = spot.json()["id"]
+    await _place_market_long(client, spot_sid)
+
+    # spot → futures is a different session (market is part of the key)
+    fut = await client.post("/api/session", json=_replay_body("SOLUSDT", market="futures"))
+    assert fut.json()["id"] != spot_sid
+    assert fut.json()["trades"] == []
+
+    # back to spot (same symbol/tf) → same session, but the market flip cleared it
+    back = await client.post("/api/session", json=_replay_body("SOLUSDT"))
+    assert back.json()["id"] == spot_sid
+    assert back.json()["created"] is False
+    assert back.json()["trades"] == []
+    assert main.store._sessions[spot_sid].trades == []
 
 
 @pytest.mark.asyncio
@@ -139,20 +157,37 @@ async def test_changing_tf_keeps_trades_and_remaps_cursor(client):
 
 
 @pytest.mark.asyncio
-async def test_reset_clears_only_current_symbol(client):
+async def test_reset_clears_replay_trades(client):
     r = await client.post("/api/session", json=_replay_body("SOLUSDT"))
     sid = r.json()["id"]
     await _place_market_long(client, sid)
-    btc = await client.post("/api/session", json=_replay_body("BTCUSDT"))
-    await _place_market_long(client, sid)
-    assert len(main.store._sessions[sid].trades) == 2
+    assert len(main.store._sessions[sid].trades) == 1
 
-    # reset BTC (the current view) → BTC trades cleared, SOL untouched
-    reset = await client.post("/api/session", json=_replay_body("BTCUSDT", reset=True))
+    # date jump on the same symbol → trades cleared, same session, fresh start
+    reset = await client.post("/api/session", json=_replay_body("SOLUSDT", reset=True))
     assert reset.json()["id"] == sid
+    assert reset.json()["created"] is True
     assert reset.json()["trades"] == []
-    sol = await client.post("/api/session", json=_replay_body("SOLUSDT"))
-    assert len(sol.json()["trades"]) == 1
+    assert main.store._sessions[sid].trades == []
+
+
+@pytest.mark.asyncio
+async def test_replay_trades_are_ephemeral(client):
+    r = await client.post("/api/session", json=_replay_body("SOLUSDT"))
+    sid = r.json()["id"]
+    await _place_market_long(client, sid)
+    assert len(main.store._sessions[sid].trades) == 1
+
+    # the persisted snapshot never carries replay trades
+    assert main.store._sessions[sid].to_snapshot()["trades"] == []
+
+    # a reload (GET latest) restores the view but with an empty trade list,
+    # and clears the warm in-memory session too
+    latest = await client.get("/api/session/latest")
+    assert latest.status_code == 200
+    assert latest.json()["symbol"] == "SOLUSDT"
+    assert latest.json()["trades"] == []
+    assert main.store._sessions[sid].trades == []
 
 
 @pytest.mark.asyncio

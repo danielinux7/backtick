@@ -291,6 +291,7 @@ def test_modify_unknown_trade_raises_keyerror():
 def test_snapshot_round_trip_preserves_trades_and_cursor():
     src = make_session(100, 110, 90, 105,
                        [open_trade("short", 100.0, sl=110.0, tp=95.0, tid="abc")])
+    src.is_live = True            # only live trades persist; replay trades are ephemeral
     snap = src.to_snapshot()
 
     dst = make_session(100, 110, 90, 105)         # fresh, empty trades

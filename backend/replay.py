@@ -487,7 +487,10 @@ class Session:
             # Anchor on the candle END so a finer-tf hydrate reveals through it.
             "cursor_time": self.cursor_anchor_time() if len(self.df) else None,
             "is_live": bool(self.is_live),
-            "trades": [t.to_dict() for t in self.trades],
+            # Replay trades are ephemeral — scoped to the current symbol+date
+            # sitting and never persisted, so a reload/restart starts clean.
+            # Live trades are real positions and do persist.
+            "trades": [t.to_dict() for t in self.trades] if self.is_live else [],
             "client_state": self.client_state,
             "symbol_views": self.symbol_views,
         }
@@ -712,6 +715,10 @@ class SessionStore:
                     if df.empty:
                         raise ValueError("no candles returned for that range")
                     cursor = _replay_cursor(df, replay_ts, warmup)
+            # Replay trades are scoped to the current symbol: switching symbols
+            # drops them (a TF change keeps + remaps them). Live keeps positions.
+            if not sess.is_live and symbol != sess.symbol:
+                sess.trades = []
             sess.symbol = symbol
             sess.tf = tf
             sess.df = df
