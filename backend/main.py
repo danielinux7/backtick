@@ -52,6 +52,15 @@ def _ensure_schema(conn) -> None:
     if "apple_sub" not in cols:
         conn.execute(text("ALTER TABLE users ADD COLUMN apple_sub VARCHAR(255)"))
         conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_apple_sub ON users (apple_sub)"))
+    if "replay_snapshots" in insp.get_table_names():
+        snap_cols = {c["name"] for c in insp.get_columns("replay_snapshots")}
+        if "is_live" not in snap_cols:
+            conn.execute(text("ALTER TABLE replay_snapshots ADD COLUMN is_live BOOLEAN DEFAULT 0"))
+            # one stable session per (user, market, mode) — this index backs the
+            # key lookup in POST /api/session. Pre-existing rows default is_live=0
+            # and self-heal to the right flag on their next save_snapshot.
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_snap_mode "
+                              "ON replay_snapshots (user_id, market, is_live)"))
 
 
 @app.on_event("startup")
@@ -86,8 +95,11 @@ class CreateSessionReq(BaseModel):
     warmup: int = 100
     replay_ts: int | None = None   # unix seconds; if set, cursor lands on first candle >= this
     live: bool = False             # true = pull recent klines and stream live updates client-side
-    # carry trades over from a previous session (e.g. when the user switches
-    # timeframe). Trades use unix timestamps, so they're tf-independent.
+    # true = start the current symbol's replay fresh (clear its trades, re-anchor
+    # the cursor to the date below) instead of resuming. Set on a date jump.
+    reset: bool = False
+    # deprecated: the server now owns per-session trades keyed by (user, market,
+    # mode), so the frontend no longer echoes them. Kept for back-compat.
     inherit_trades: list[dict] | None = None
 
 
@@ -152,7 +164,10 @@ def _serialize_session(sess) -> dict:
         "current_time": sess.current_time(),
         "current_price": mark,
         "candles": candles,
-        "trades": [t.to_dict(mark) for t in sess.trades],
+        # a session spans multiple symbols (symbol is a view) — surface only the
+        # active symbol's trades so the table + chart markers match what's shown
+        "trades": [t.to_dict(mark) for t in sess.trades
+                   if not t.symbol or t.symbol == sess.symbol],
         "in_tick": in_tick,                                # partial candle present
         "tick_idx": int(sess.tick_idx) if in_tick else 0,
         "is_live": bool(sess.is_live),
@@ -193,10 +208,48 @@ async def create_session(
 ) -> dict:
     if req.tf not in VALID_TFS:
         raise HTTPException(400, f"unsupported tf {req.tf}")
+    symbol = req.symbol.upper()
+
+    # One stable session per (user, market, mode). Symbol + tf are views within
+    # it: resuming a mode/symbol/tf re-points the same session (keeping its
+    # trades); a date jump (reset) starts the current symbol's replay fresh.
+    key_row = (await db.execute(
+        select(ReplaySnapshot)
+        .where(ReplaySnapshot.user_id == user.id,
+               ReplaySnapshot.market == req.market,
+               ReplaySnapshot.is_live == req.live)
+        .order_by(ReplaySnapshot.updated_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+
+    def _fresh(sid):
+        return store.create(symbol, req.market, req.tf, req.start, req.end,
+                            warmup=req.warmup, replay_ts=req.replay_ts,
+                            live=req.live, user_id=user.id, sid=sid)
+
     try:
-        sess = store.create(req.symbol, req.market, req.tf, req.start, req.end,
-                            warmup=req.warmup, replay_ts=req.replay_ts, live=req.live,
-                            inherit_trades=req.inherit_trades, user_id=user.id)
+        if req.reset and key_row is not None:
+            sess = await hydrate_session(db, store, key_row.sid, user.id)
+            if sess is None:
+                sess = _fresh(key_row.sid)
+            else:
+                sess.trades = [t for t in sess.trades if t.symbol != symbol]
+                store.set_view(sess, symbol, req.tf, start=req.start, end=req.end,
+                               replay_ts=req.replay_ts, warmup=req.warmup, fresh=True)
+            created = True
+        elif key_row is not None and not req.reset:
+            sess = await hydrate_session(db, store, key_row.sid, user.id)
+            if sess is None:
+                sess = _fresh(key_row.sid)
+                created = True
+            else:
+                if (sess.symbol, sess.tf) != (symbol, req.tf):
+                    store.set_view(sess, symbol, req.tf, start=req.start, end=req.end,
+                                   replay_ts=req.replay_ts, warmup=req.warmup)
+                created = False
+        else:
+            sess = _fresh(None)
+            created = True
     except RateLimitedError as e:
         raise HTTPException(429, str(e)) from e
     except ValueError as e:
@@ -204,7 +257,9 @@ async def create_session(
     except Exception as e:
         raise HTTPException(502, f"data fetch failed: {e}") from e
     await save_snapshot(db, sess)
-    return _serialize_session(sess)
+    body = _serialize_session(sess)
+    body["created"] = created
+    return body
 
 
 # Declared before the /{sid} route so "latest" isn't swallowed as a session id.
@@ -401,6 +456,7 @@ async def place_trade(
         now_ts = int(req.at_time) if req.at_time is not None else sess.current_time()
         trade = Trade(
             id=secrets.token_hex(4),
+            symbol=sess.symbol,
             side=req.side,
             qty=req.qty,
             order_type=req.order_type,

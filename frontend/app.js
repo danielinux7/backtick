@@ -47,10 +47,12 @@
   const _hms = _fmt({ hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const _ymdHm = _fmt({ year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   const _dm  = _fmt({ day: "2-digit", month: "2-digit" });
+  const _dmHm = _fmt({ day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
   const tzHm    = (sec) => _hm.format(new Date(sec * 1000));
   const tzDm    = (sec) => _dm.format(new Date(sec * 1000));
   const tzHmsMs = (ms)  => _hms.format(new Date(ms));
   const tzYmdHm = (sec) => _ymdHm.format(new Date(sec * 1000)).replace(",", "");
+  const tzDmHm  = (sec) => _dmHm.format(new Date(sec * 1000)).replace(",", "");   // "DD/MM HH:MM"
 
   // ---- Chart setup
   const chartEl = $("#chart");
@@ -425,7 +427,8 @@
     // injects a separate native input.flatpickr-mobile that escapes the
     // `body.replay-mode #replay-date` hide rule and leaks into live mode on phones.
     disableMobile: true,
-    onChange: () => { if (autoLoadReady) loadSession(); },
+    // a date jump is an explicit "start over here" — reset the replay session
+    onChange: () => { if (autoLoadReady) loadSession({ reset: true }); },
   });
 
   // ---- State
@@ -1201,11 +1204,22 @@
   // ---- Trade rendering
   const renderTrades = () => {
     if (!session) return;
-    // lightweight-charts markers must align with a candle's open time;
-    // tick-mode and live SL/TP set times mid-candle, so round down to the
-    // candle the event landed in
-    const tfSec = TF_SECONDS[session.tf];
-    const markerTime = (t) => (tfSec ? Math.floor(t / tfSec) * tfSec : t);
+    // lightweight-charts markers must align with an actual candle's open time.
+    // Snap each event time to the candle that contains it (largest candle.time
+    // <= t) instead of an arithmetic floor — guarantees the marker lands on a
+    // real bar (gaps, forming candle) and re-maps for free when the TF/symbol
+    // view changes, since session.candles is the current view.
+    const candleTimes = (session.candles || []).map((c) => c.time);
+    const markerTime = (t) => {
+      if (!candleTimes.length) return t;
+      if (t <= candleTimes[0]) return candleTimes[0];
+      let lo = 0, hi = candleTimes.length - 1, ans = candleTimes[0];
+      while (lo <= hi) {
+        const m = (lo + hi) >> 1;
+        if (candleTimes[m] <= t) { ans = candleTimes[m]; lo = m + 1; } else hi = m - 1;
+      }
+      return ans;
+    };
     // for open trades in live mode the backend's pnl is stale (computed against
     // last serialize); recompute against the live mark
     const livePnl = (t) => {
@@ -1301,6 +1315,8 @@
         : (t.limit_price != null ? `@${t.limit_price.toFixed(4)}` : "—");
       const exitCol = t.status === "closed" ? t.exit_price.toFixed(4)
         : (t.status === "pending" ? "pending" : "—");
+      const openedCol = t.entry_time != null ? tzDmHm(t.entry_time) : "—";
+      const closedCol = (t.status === "closed" && t.exit_time != null) ? tzDmHm(t.exit_time) : "—";
       const actionCol = (t.status === "open" || t.status === "pending")
         ? `<button data-close="${t.id}">${t.status === "pending" ? "cancel" : "close"}</button>`
         : (t.exit_reason || "");
@@ -1309,6 +1325,8 @@
         <td>${t.qty}</td>
         <td>${entry}</td>
         <td>${exitCol}</td>
+        <td class="t-time">${openedCol}</td>
+        <td class="t-time">${closedCol}</td>
         <td class="${pnlClass}">${t.status === "pending" ? "—" : pnl.toFixed(4)}</td>
         <td>${actionCol}</td>`;
       tbody.appendChild(tr);
@@ -1681,7 +1699,7 @@
   };
 
   // ---- Actions
-  const loadSession = async () => {
+  const loadSession = async (opts = {}) => {
     const fd = new FormData(setupForm);
     const mode = fd.get("mode") || "replay";
     const tf = fd.get("tf");
@@ -1721,31 +1739,26 @@
     const signal = loadAbort.signal;
     setStatus(mode === "live" ? "connecting…" : "loading…");
     try {
-      const sameSymbol = session && session.symbol === body.symbol;
-      // trades are mode-/market-specific (live and replay portfolios are separate;
-      // spot and futures positions don't transfer either) — only carry them
-      // across when ALL of symbol, market, and mode match.
-      const sameMarket = session && session.market === body.market;
-      const sameMode = session && Boolean(session.is_live) === (mode === "live");
-      const inheritTrades = sameSymbol && sameMarket && sameMode;
-      if (inheritTrades && session.trades?.length) {
-        body.inherit_trades = session.trades;
-      }
-      // Carry the chart setup (indicators, h-lines, measure, lots/SL/TP) forward
-      // into the new session. Each setup change (symbol/tf/mode) makes a brand
-      // new session; without this the new one starts with empty client_state and
-      // a later restore would wipe the setup. H-lines/measure are price/time-tied
-      // so only keep them when the symbol is unchanged (e.g. a live↔replay flip).
+      // The server owns one stable session per (user, market, mode) and resumes
+      // it (with its own per-symbol trades + saved chart setup) — no trade echo.
+      body.reset = !!opts.reset;
+      // Snapshot the current chart setup so a brand-new session inherits the
+      // indicators + lots/SL/TP defaults (but not the old symbol's drawings).
       const carried = session ? collectClientState() : null;
-      if (carried && !sameSymbol) { carried.hlines = []; carried.measure = null; }
-      resetForNewSession({ preserveHlines: sameSymbol, preserveTrades: inheritTrades });
+      resetForNewSession();
       closeLiveStream();
       const data = await api("/api/session", {
         method: "POST", body: JSON.stringify(body), signal,
       });
       applySession(data, true);
       clearFieldError(setupForm.symbol);   // a prior "unknown symbol" cleared on success
-      if (carried) { applyClientState(carried); saveClientState(); }   // re-establish + persist to the new session
+      if (data.created) {
+        // fresh session: seed it from the prior view's indicators + trade
+        // defaults; drop drawings (they're symbol-specific) and persist.
+        if (carried) { carried.bySymbol = {}; applyClientState(carried); saveClientState(); }
+      } else {
+        applyClientState(data.client_state);   // resumed: its own saved setup comes back
+      }
       if (data.is_live) connectLiveStream(data);
       // Clear the transient "connecting…/loading…" line. The loaded-candle count
       // was just diagnostic noise (the user reads it as logging), not something
@@ -1837,12 +1850,24 @@
       tpPct: $("#m-tp-pct")?.value ?? "",
     },
   });
-  const collectClientState = () => ({
-    indicators: selectedIndicators(),
-    hlines: hlines.map((h) => ({ price: h.price, color: h.color, width: h.width, style: h.style })),
-    measure: measureBounds ? { s: { ...measureBounds.s }, e: { ...measureBounds.e } } : null,
-    trade: collectTradeDefaults(),
-  });
+  // A session spans multiple symbols (symbol is a view). Indicators + trade
+  // defaults are shared across symbols; h-lines/measure are price/time-tied so
+  // they live under bySymbol[symbol]. We merge the current symbol's live
+  // drawings over the other symbols' saved drawings (from the last applied state).
+  const collectClientState = () => {
+    const bySymbol = { ...((session && session.client_state && session.client_state.bySymbol) || {}) };
+    if (session && session.symbol) {
+      bySymbol[session.symbol] = {
+        hlines: hlines.map((h) => ({ price: h.price, color: h.color, width: h.width, style: h.style })),
+        measure: measureBounds ? { s: { ...measureBounds.s }, e: { ...measureBounds.e } } : null,
+      };
+    }
+    return {
+      indicators: selectedIndicators(),
+      trade: collectTradeDefaults(),
+      bySymbol,
+    };
+  };
   const saveClientState = () => {
     if (suppressClientSave || !session || !session.id) return;
     const sid = session.id;
@@ -1883,14 +1908,19 @@
         if (btn) btn.classList.add("active");
       }
       renderIndicators();
+      // drawings are per-symbol (bySymbol[symbol]); fall back to a legacy flat
+      // blob (pre-namespacing) so old saved state still restores.
+      const draw = cs.bySymbol
+        ? ((session && cs.bySymbol[session.symbol]) || {})
+        : { hlines: cs.hlines, measure: cs.measure };
       // h-lines
       clearHlines();
-      for (const h of cs.hlines || []) if (h && isFinite(h.price)) addHlineSpec(h);
+      for (const h of draw.hlines || []) if (h && isFinite(h.price)) addHlineSpec(h);
       // measure
       clearMeasure();
-      if (cs.measure && cs.measure.s && cs.measure.e) {
-        measureFirst = { time: cs.measure.s.time, price: cs.measure.s.price };
-        finishMeasure({ time: cs.measure.e.time, price: cs.measure.e.price });
+      if (draw.measure && draw.measure.s && draw.measure.e) {
+        measureFirst = { time: draw.measure.s.time, price: draw.measure.s.price };
+        finishMeasure({ time: draw.measure.e.time, price: draw.measure.e.price });
       }
       // last-used lots / SL / TP
       applyTradeDefaults(cs.trade);
@@ -3098,5 +3128,12 @@
   setPlayIcon(false);
   autoLoadReady = true;
   // Restore the last saved session if there is one; otherwise load the default.
-  (async () => { if (!(await restoreLatest())) loadSession(); })();
+  (async () => {
+    try { if (!(await restoreLatest())) await loadSession(); }
+    finally {
+      // drop the boot splash once the first chart is in (success or failure)
+      const s = document.getElementById("boot-splash");
+      if (s) { requestAnimationFrame(() => s.classList.add("hide")); setTimeout(() => s.remove(), 400); }
+    }
+  })();
 })();

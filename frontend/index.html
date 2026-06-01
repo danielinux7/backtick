@@ -32,17 +32,17 @@
   <script src="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.js"></script>
 </head>
 <body>
+  <div id="boot-splash">
+    <svg class="logo" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="40" height="40" rx="8" fill="#0f1218"/>
+      <g transform="rotate(40 20 20)">
+        <line x1="20" y1="6" x2="20" y2="34" stroke="#26a69a" stroke-width="2" stroke-linecap="round"/>
+        <rect x="15" y="12" width="10" height="16" rx="2" fill="#26a69a"/>
+      </g>
+    </svg>
+    <span>Backtick</span>
+  </div>
   <header>
-    <div class="brand">
-      <svg class="logo" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <rect width="40" height="40" rx="8" fill="#0f1218"/>
-        <g transform="rotate(40 20 20)">
-          <line x1="20" y1="6" x2="20" y2="34" stroke="#26a69a" stroke-width="2" stroke-linecap="round"/>
-          <rect x="15" y="12" width="10" height="16" rx="2" fill="#26a69a"/>
-        </g>
-      </svg>
-      <span>Backtick</span>
-    </div>
     <form id="setup-form" class="setup">
       <select name="mode" id="mode-select" title="Replay = historical chart; Live = real-time Binance stream">
         <option value="live" selected>Live</option>
@@ -252,7 +252,7 @@
         <div class="totals" id="totals"></div>
         <table id="trades-table">
           <thead><tr>
-            <th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th></th>
+            <th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Opened</th><th>Closed</th><th>P&amp;L</th><th></th>
           </tr></thead>
           <tbody></tbody>
         </table>

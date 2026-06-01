@@ -68,6 +68,8 @@ class ReplaySnapshot(Base):
     symbol: Mapped[str] = mapped_column(String(32))
     market: Mapped[str] = mapped_column(String(16))
     tf: Mapped[str] = mapped_column(String(8))
+    # mode flag — part of the stable session key (user_id, market, is_live).
+    is_live: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     snapshot: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)

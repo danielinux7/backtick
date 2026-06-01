@@ -24,6 +24,7 @@ async def save_snapshot(db: AsyncSession, sess: Session) -> None:
             symbol=sess.symbol,
             market=sess.market,
             tf=sess.tf,
+            is_live=sess.is_live,
             snapshot=snap,
         )
         db.add(row)
@@ -32,6 +33,7 @@ async def save_snapshot(db: AsyncSession, sess: Session) -> None:
         row.symbol = sess.symbol
         row.market = sess.market
         row.tf = sess.tf
+        row.is_live = sess.is_live
         row.snapshot = snap
     await db.commit()
 

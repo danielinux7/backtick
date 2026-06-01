@@ -31,6 +31,10 @@ class Trade:
     exit_time: int | None = None
     exit_price: float | None = None
     exit_reason: str | None = None   # "manual" | "sl" | "tp"
+    # Symbol this trade belongs to. A session now spans multiple symbols (symbol
+    # is a view), so trades are tagged and processed/shown per-symbol. Defaulted
+    # for back-compat; tagged at placement and backfilled on snapshot load.
+    symbol: str = ""
 
     def pnl(self, mark: float) -> float:
         if self.status == "pending" or self.entry_price is None:
@@ -46,6 +50,7 @@ class Trade:
     def to_dict(self, mark: float | None = None) -> dict:
         return {
             "id": self.id,
+            "symbol": self.symbol,
             "side": self.side,
             "qty": self.qty,
             "order_type": self.order_type,
@@ -67,6 +72,7 @@ def _trade_from_dict(d: dict) -> Trade | None:
     try:
         return Trade(
             id=str(d["id"]),
+            symbol=str(d.get("symbol", "")),
             side=str(d["side"]),
             qty=float(d["qty"]),
             order_type=str(d.get("order_type", "market")),
@@ -123,6 +129,10 @@ class Session:
     # h-lines, measure, last-used lots/SL/TP). Persisted verbatim so a restored
     # session comes back with the same chart setup; the backend never reads it.
     client_state: dict = field(default_factory=dict)
+    # per-symbol replay resume state so switching the symbol view (then back)
+    # lands on the same bar: {symbol: {"start", "end", "cursor_time"}}.
+    # Replay only — live is always pinned to the latest candle.
+    symbol_views: dict = field(default_factory=dict)
 
     def candles_so_far(self) -> list[dict]:
         sub = self.df.iloc[: self.cursor + 1]
@@ -261,6 +271,9 @@ class Session:
         happened after it. Shared by candle-level `back` and tick-level rewind."""
         survivors: list[Trade] = []
         for t in self.trades:
+            if t.symbol and t.symbol != self.symbol:
+                survivors.append(t)               # other symbols sit at their own cursor
+                continue
             if t.created_time > new_time:
                 continue
             if t.exit_time is not None and t.exit_time > new_time:
@@ -358,6 +371,8 @@ class Session:
         changed: list[Trade] = []
         just_filled: set[str] = set()
         for t in self.trades:
+            if t.symbol and t.symbol != self.symbol:
+                continue
             if t.status != "pending" or t.limit_price is None:
                 continue
             if t.side == "long" and price <= t.limit_price:
@@ -373,6 +388,8 @@ class Session:
                 just_filled.add(t.id)
                 changed.append(t)
         for t in self.trades:
+            if t.symbol and t.symbol != self.symbol:
+                continue
             if t.status != "open" or t.sl is None or t.id in just_filled:
                 continue
             hit: float | None = None
@@ -412,6 +429,7 @@ class Session:
             "is_live": bool(self.is_live),
             "trades": [t.to_dict() for t in self.trades],
             "client_state": self.client_state,
+            "symbol_views": self.symbol_views,
         }
 
     def apply_snapshot(self, snap: dict) -> None:
@@ -426,8 +444,14 @@ class Session:
             t = _trade_from_dict(d)
             if t is not None:
                 rebuilt.append(t)
+        # Legacy snapshots predate per-trade symbol tags — tag them with the
+        # session's symbol so they keep showing/processing under it.
+        for t in rebuilt:
+            if not t.symbol:
+                t.symbol = snap.get("symbol", self.symbol)
         self.trades = rebuilt
         self.client_state = snap.get("client_state") or {}
+        self.symbol_views = snap.get("symbol_views") or {}
         self.reset_tick_state()
 
     def process_candle(self) -> list[Trade]:
@@ -449,6 +473,8 @@ class Session:
         # 1) fill pending limit orders
         just_filled: set[str] = set()
         for t in self.trades:
+            if t.symbol and t.symbol != self.symbol:
+                continue                          # only the symbol in view advances
             if t.status != "pending" or t.limit_price is None:
                 continue
             entry: float | None = None
@@ -472,6 +498,8 @@ class Session:
         # 2) SL/TP on open trades — only when SL is set, and never on the same
         # candle that filled the trade.
         for t in self.trades:
+            if t.symbol and t.symbol != self.symbol:
+                continue
             if t.status != "open" or t.sl is None or t.id in just_filled:
                 continue
             hit_price: float | None = None
@@ -504,6 +532,42 @@ class Session:
         return changed
 
 
+def _live_window_df(symbol: str, market: str, tf: str, warmup: int):
+    """Recent klines as warmup context for a live session; the frontend takes
+    over via Binance WS streams for live updates. Returns (df, cursor)."""
+    tf_ms = TF_MS[tf]
+    now_ms = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)
+    span_ms = max((warmup + 5) * tf_ms, 2 * 86_400_000)   # always span ≥ 2 days
+    start_ms = now_ms - span_ms
+    start_iso = dt.datetime.fromtimestamp(start_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
+    # _to_ms truncates to start-of-day, so end="today" would stop at last
+    # midnight and miss all of today's klines. Pass tomorrow to capture
+    # everything that has closed up to right now.
+    end_iso = (dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc)
+               + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    df = fetch_klines(symbol, tf, start_iso, end_iso, market=market)
+    if df.empty:
+        raise ValueError("no recent candles for live session")
+    # drop the still-forming kline (if returned) so the chart's WS feed
+    # owns it cleanly — avoids stale OHLC for the live bar
+    tf_sec = tf_ms // 1000
+    now_s = now_ms // 1000
+    if int(df["time"].iloc[-1]) + tf_sec > now_s:
+        df = df.iloc[:-1]
+    df = df.tail(warmup + 5).reset_index(drop=True)
+    if df.empty:
+        raise ValueError("no recent candles for live session")
+    return df, len(df) - 1
+
+
+def _replay_cursor(df, replay_ts: int | None, warmup: int) -> int:
+    """Index of the bar to park the cursor on for a replay session."""
+    if replay_ts is not None:
+        idx = int(df["time"].searchsorted(replay_ts, side="left"))
+        return max(0, min(idx, len(df) - 1))
+    return max(0, min(warmup, len(df) - 1))
+
+
 class SessionStore:
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
@@ -514,53 +578,90 @@ class SessionStore:
                warmup: int = 100, replay_ts: int | None = None,
                live: bool = False,
                inherit_trades: list[dict] | None = None,
-               user_id: int | None = None) -> Session:
+               user_id: int | None = None,
+               sid: str | None = None) -> Session:
+        symbol = symbol.upper()
         if live:
-            # pull recent klines as warmup context; the frontend takes over
-            # via Binance WS streams for live updates
-            tf_ms = TF_MS[tf]
-            now_ms = int(dt.datetime.now(dt.timezone.utc).timestamp() * 1000)
-            span_ms = max((warmup + 5) * tf_ms, 2 * 86_400_000)   # always span ≥ 2 days
-            start_ms = now_ms - span_ms
-            start_iso = dt.datetime.fromtimestamp(start_ms / 1000, dt.timezone.utc).strftime("%Y-%m-%d")
-            # _to_ms truncates to start-of-day, so end="today" would stop at last
-            # midnight and miss all of today's klines. Pass tomorrow to capture
-            # everything that has closed up to right now.
-            end_iso = (dt.datetime.fromtimestamp(now_ms / 1000, dt.timezone.utc)
-                       + dt.timedelta(days=1)).strftime("%Y-%m-%d")
-            df = fetch_klines(symbol, tf, start_iso, end_iso, market=market)
-            if df.empty:
-                raise ValueError("no recent candles for live session")
-            # drop the still-forming kline (if returned) so the chart's WS feed
-            # owns it cleanly — avoids stale OHLC for the live bar
-            tf_sec = tf_ms // 1000
-            now_s = now_ms // 1000
-            if int(df["time"].iloc[-1]) + tf_sec > now_s:
-                df = df.iloc[:-1]
-            df = df.tail(warmup + 5).reset_index(drop=True)
-            if df.empty:
-                raise ValueError("no recent candles for live session")
-            cursor = len(df) - 1
+            df, cursor = _live_window_df(symbol, market, tf, warmup)
         else:
             if start is None or end is None:
                 raise ValueError("start and end are required for replay sessions")
             df = fetch_klines(symbol, tf, start, end, market=market)
             if df.empty:
                 raise ValueError("no candles returned for that range")
-            if replay_ts is not None:
-                idx = int(df["time"].searchsorted(replay_ts, side="left"))
-                cursor = max(0, min(idx, len(df) - 1))
-            else:
-                cursor = max(0, min(warmup, len(df) - 1))
-        sid = secrets.token_hex(6)
-        sess = Session(id=sid, symbol=symbol.upper(), market=market, tf=tf,
+            cursor = _replay_cursor(df, replay_ts, warmup)
+        sid = sid or secrets.token_hex(6)
+        sess = Session(id=sid, symbol=symbol, market=market, tf=tf,
                        start=start or "", end=end or "",
                        df=df, cursor=cursor, is_live=live, user_id=user_id)
         if inherit_trades:
             rebuilt = (_trade_from_dict(t) for t in inherit_trades)
             sess.trades = [t for t in rebuilt if t is not None]
+            for t in sess.trades:
+                if not t.symbol:
+                    t.symbol = symbol
+        if not live:
+            sess.symbol_views[symbol] = {
+                "start": start or "", "end": end or "",
+                "cursor_time": int(df["time"].iloc[cursor]),
+            }
         with self._lock:
             self._sessions[sid] = sess
+        return sess
+
+    def set_view(self, sess: Session, symbol: str, tf: str, *,
+                 start: str | None = None, end: str | None = None,
+                 replay_ts: int | None = None, warmup: int = 100,
+                 fresh: bool = False) -> Session:
+        """Re-point a session to a new (symbol, tf) view, keeping all trades /
+        client_state / id / user_id. Replay resumes each symbol at the bar it
+        was last left on (via symbol_views); a brand-new symbol uses the
+        request's start/end/replay_ts. Live always pins to the latest candle.
+
+        fresh=True ignores any saved resume point and anchors to the request's
+        date (used by a date-jump reset on the current symbol)."""
+        symbol = symbol.upper()
+        with sess.lock:
+            if not sess.is_live and not fresh:
+                # remember where we're leaving the outgoing symbol
+                sess.symbol_views[sess.symbol] = {
+                    "start": sess.start, "end": sess.end,
+                    "cursor_time": sess.current_time(),
+                }
+            if sess.is_live:
+                df, cursor = _live_window_df(symbol, sess.market, tf, warmup)
+                new_start = new_end = ""
+            else:
+                saved = None if fresh else sess.symbol_views.get(symbol)
+                if saved and saved.get("start") and saved.get("end"):
+                    new_start, new_end = saved["start"], saved["end"]
+                    df = fetch_klines(symbol, tf, new_start, new_end, market=sess.market)
+                    if df.empty:
+                        raise ValueError("no candles returned for that range")
+                    idx = int(df["time"].searchsorted(int(saved.get("cursor_time", 0)), side="left"))
+                    cursor = max(0, min(idx, len(df) - 1))
+                else:
+                    if start is None or end is None:
+                        raise ValueError("start and end are required for replay sessions")
+                    new_start, new_end = start, end
+                    df = fetch_klines(symbol, tf, start, end, market=sess.market)
+                    if df.empty:
+                        raise ValueError("no candles returned for that range")
+                    cursor = _replay_cursor(df, replay_ts, warmup)
+            sess.symbol = symbol
+            sess.tf = tf
+            sess.df = df
+            sess.cursor = cursor
+            sess.start = new_start
+            sess.end = new_end
+            sess.reset_tick_state()
+            sess.cvd_cache.clear()
+            sess.live_aggtrades.clear()
+            if not sess.is_live:
+                sess.symbol_views[symbol] = {
+                    "start": new_start, "end": new_end,
+                    "cursor_time": int(df["time"].iloc[cursor]),
+                }
         return sess
 
     def get(self, sid: str) -> Session:

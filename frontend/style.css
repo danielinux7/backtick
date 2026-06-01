@@ -1,6 +1,17 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; height: 100%; background: #131722; color: #d1d4dc; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
 
+/* Boot splash — full-screen logo + name shown until the first chart loads. */
+#boot-splash {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  background: #0f1218; color: #d1d4dc;
+  transition: opacity 0.3s ease;
+}
+#boot-splash .logo { width: 64px; height: 64px; }
+#boot-splash span { font-size: 22px; font-weight: 600; letter-spacing: 0.5px; background: linear-gradient(120deg, #26a69a, #4dd0c1); -webkit-background-clip: text; background-clip: text; color: transparent; }
+#boot-splash.hide { opacity: 0; pointer-events: none; }
+
 header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #0f1218; border-bottom: 1px solid #1e222d; flex-wrap: wrap; }
 .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; letter-spacing: 0.4px; font-size: 14px; }
 .brand .logo { width: 24px; height: 24px; flex-shrink: 0; }
@@ -667,6 +678,7 @@ main { display: grid; grid-template-columns: 1fr 320px; height: calc(100% - 56px
 #trades-table { width: 100%; font-size: 13px; border-collapse: collapse; }
 #trades-table th { text-align: left; padding: 6px 4px; color: #aaa; border-bottom: 1px solid #2a2e39; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
 #trades-table td { padding: 6px 4px; border-bottom: 1px solid #1e222d; }
+#trades-table td.t-time { white-space: nowrap; color: #9aa0aa; font-size: 12px; }
 #trades-table .pnl-pos { color: #4dd0c1; font-weight: 600; }
 #trades-table .pnl-neg { color: #ff7d75; font-weight: 600; }
 #trades-table .closed { opacity: 0.7; }
