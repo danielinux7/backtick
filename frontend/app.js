@@ -1367,6 +1367,10 @@
     $("#play").disabled = atEnd;
     $("#long-btn").disabled = tradingDisabled;
     $("#short-btn").disabled = tradingDisabled;
+    // Explain why the replay controls go dead at the tail of the data, so it
+    // doesn't read as a broken UI.
+    const endHint = $("#replay-end-hint");
+    if (endHint) endHint.hidden = !(atEnd && !session.is_live);
     if (atEnd && playTimer && !session.is_live) stopPlay();
 
     if (isNew) {
