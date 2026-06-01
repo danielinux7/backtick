@@ -55,7 +55,11 @@ def _ensure_schema(conn) -> None:
     if "replay_snapshots" in insp.get_table_names():
         snap_cols = {c["name"] for c in insp.get_columns("replay_snapshots")}
         if "is_live" not in snap_cols:
-            conn.execute(text("ALTER TABLE replay_snapshots ADD COLUMN is_live BOOLEAN DEFAULT 0"))
+            # DEFAULT FALSE, not DEFAULT 0: Postgres rejects an integer default on a
+            # boolean column ("column is of type boolean but default expression is of
+            # type integer"), which aborts startup and fails the Render deploy. The
+            # FALSE literal is accepted by both Postgres and SQLite.
+            conn.execute(text("ALTER TABLE replay_snapshots ADD COLUMN is_live BOOLEAN DEFAULT FALSE"))
             # one stable session per (user, market, mode) — this index backs the
             # key lookup in POST /api/session. Pre-existing rows default is_live=0
             # and self-heal to the right flag on their next save_snapshot.
