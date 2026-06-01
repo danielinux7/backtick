@@ -14,6 +14,19 @@ const systemChromium = ['/snap/bin/chromium', '/usr/bin/chromium', '/usr/bin/chr
   .find((p) => existsSync(p));
 const chromiumPath = process.env.PLAYWRIGHT_CHROMIUM_PATH ?? systemChromium;
 
+// Fall back to Playwright's bundled chromium when no system one is found.
+// A system (e.g. snap) chromium needs the sandbox disabled to launch.
+const chromiumLaunch = chromiumPath
+  ? {
+      launchOptions: {
+        executablePath: chromiumPath,
+        args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+      },
+      // chromiumSandbox at the project level (not launchOptions)
+      chromiumSandbox: false,
+    }
+  : {};
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 60_000,
@@ -24,22 +37,17 @@ export default defineConfig({
   },
   projects: [
     {
+      // Desktop, mouse-driven smoke.
       name: 'chromium',
-      use: {
-        ...devices['Desktop Chrome'],
-        // Fall back to Playwright's bundled chromium when no system one is found.
-        // A system (e.g. snap) chromium needs the sandbox disabled to launch.
-        ...(chromiumPath
-          ? {
-              launchOptions: {
-                executablePath: chromiumPath,
-                args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-              },
-              // chromiumSandbox at the project level (not launchOptions)
-              chromiumSandbox: false,
-            }
-          : {}),
-      },
+      testMatch: /replay_smoke\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], ...chromiumLaunch },
+    },
+    {
+      // Phone viewport with real touch (hasTouch/isMobile) — drives the mobile
+      // order bar and mode toggle via taps. Pixel 5 is a chromium device preset.
+      name: 'mobile-chromium',
+      testMatch: /touch\.spec\.ts/,
+      use: { ...devices['Pixel 5'], ...chromiumLaunch },
     },
   ],
   // Auto-starts the app if it isn't already running. Reuses an existing
