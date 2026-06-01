@@ -582,7 +582,7 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
   font-size: 12px; color: #b0b6c0; }
 .controls button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 12px; cursor: pointer; }
 .controls-center button { min-width: 64px; }
-.controls button:hover:not(:disabled) { background: #2a2e39; }
+.controls button:hover:not(:disabled):not(.active) { background: #2a2e39; }
 .controls button:disabled { opacity: 0.4; cursor: not-allowed; }
 .controls input, .controls select { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 2px 6px; }
 
