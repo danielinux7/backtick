@@ -22,6 +22,10 @@ html, body { margin: 0; padding: 0; height: 100%; background: #131722; color: #d
   animation: bt-name-in 0.5s ease 0.12s both;
 }
 #boot-splash.hide { opacity: 0; pointer-events: none; }
+/* Skip the splash entirely on in-app reloads (login/logout, OAuth return, manual
+   refresh) — the inline <head> script in index.html sets this after the first
+   load of the tab session. */
+html.bt-no-splash #boot-splash { display: none !important; }
 
 @keyframes bt-logo-in {
   from { opacity: 0; transform: scale(0.8) translateY(6px); }

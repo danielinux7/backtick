@@ -26,6 +26,18 @@
   <meta name="twitter:description" content="Replay Binance markets candle by candle, place hypothetical trades, and watch them resolve." />
   <meta name="twitter:image" content="https://backtick.onrender.com/static/icons/og-image.png" />
   <link rel="stylesheet" href="/static/style.css" />
+  <script>
+    // Boot splash only on the first load of a tab session; skip it on in-app
+    // reloads (login/logout, OAuth return, refresh) so it doesn't flash each
+    // time. Must run before paint, hence inline here rather than in app.js.
+    try {
+      if (sessionStorage.getItem("bt-splash-seen")) {
+        document.documentElement.classList.add("bt-no-splash");
+      } else {
+        sessionStorage.setItem("bt-splash-seen", "1");
+      }
+    } catch (e) {}
+  </script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/flatpickr.min.css" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr@4.6.13/dist/themes/dark.css" />
   <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js"></script>
