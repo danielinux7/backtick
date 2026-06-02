@@ -116,12 +116,25 @@ async def test_providers_reports_unconfigured(monkeypatch):
     assert await _get_providers() == {"google": False, "apple": False}
 
 
-@pytest.mark.asyncio
-async def test_providers_reports_apple_enabled(monkeypatch):
+def _set_apple_env(monkeypatch):
     monkeypatch.setenv("APPLE_CLIENT_ID", "com.backtick.web")
     monkeypatch.setenv("APPLE_TEAM_ID", "TEAM123456")
     monkeypatch.setenv("APPLE_KEY_ID", "KEY1234567")
     monkeypatch.setenv("APPLE_PRIVATE_KEY", "pem")
     monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
     monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_providers_hides_apple_while_flag_off(monkeypatch):
+    # Apple is built but hidden in the UI for now (_APPLE_LOGIN_VISIBLE=False),
+    # so /providers reports apple:false even with the env fully configured.
+    _set_apple_env(monkeypatch)
+    assert await _get_providers() == {"google": False, "apple": False}
+
+
+@pytest.mark.asyncio
+async def test_providers_reports_apple_when_visible(monkeypatch):
+    monkeypatch.setattr("backend.routes_auth._APPLE_LOGIN_VISIBLE", True)
+    _set_apple_env(monkeypatch)
     assert await _get_providers() == {"google": False, "apple": True}

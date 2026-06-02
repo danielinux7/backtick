@@ -91,12 +91,21 @@ def _google_configured() -> bool:
     return bool(os.environ.get("GOOGLE_CLIENT_ID") and os.environ.get("GOOGLE_CLIENT_SECRET"))
 
 
+# Apple sign-in is fully built but intentionally hidden in the UI for now. The
+# backend flow stays intact (the /apple/* routes still gate on _apple_enabled);
+# flip this to True (and set the APPLE_* env vars) to bring the button back.
+_APPLE_LOGIN_VISIBLE = False
+
+
 @router.get("/providers")
 async def providers() -> dict:
-    """Which OAuth providers this server has configured, so the frontend hides
-    buttons that would otherwise just 503. Public — it reflects server config,
-    not the visitor's identity."""
-    return {"google": _google_configured(), "apple": _apple_enabled()}
+    """Which OAuth providers this server offers, so the frontend hides buttons
+    that would otherwise just 503. Public — it reflects server config, not the
+    visitor's identity."""
+    return {
+        "google": _google_configured(),
+        "apple": _APPLE_LOGIN_VISIBLE and _apple_enabled(),
+    }
 
 
 @router.get("/me")
