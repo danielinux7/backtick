@@ -570,8 +570,12 @@
     avatar.className = "user-avatar" + (guest ? " is-guest" : "");
     avatar.setAttribute("aria-label", guest ? "Guest menu" : `Account menu for ${me.email}`);
     avatar.setAttribute("aria-haspopup", "true");
-    if (guest) {
-      // Person-silhouette glyph for anonymous visitors
+    if (window.BTAvatars) {
+      // Deterministic character avatar (a distinct ghost for guests).
+      avatar.classList.add("has-art");
+      avatar.innerHTML = guest ? window.BTAvatars.guest() : window.BTAvatars.forAccount(me);
+    } else if (guest) {
+      // Fallback if avatars.js didn't load: person-silhouette glyph.
       avatar.innerHTML =
         '<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">' +
         '<path fill="currentColor" d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-3.3 0-8 1.7-8 5v1h16v-1c0-3.3-4.7-5-8-5z"/>' +

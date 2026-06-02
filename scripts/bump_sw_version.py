@@ -27,6 +27,7 @@ SHELL = [
     "frontend/index.html",
     "frontend/login.html",
     "frontend/style.css",
+    "frontend/avatars.js",
     "frontend/app.js",
     "frontend/symbol-picker.js",
     "frontend/pwa.js",

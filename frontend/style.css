@@ -79,6 +79,10 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .user-avatar:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,0.45); }
 .user-avatar:active { transform: translateY(0); }
 .user-avatar.is-guest { background: #3a4255; color: #d1d4dc; }
+/* Character-avatar art (avatars.js) draws its own coloured tile, so drop the
+   flat background/padding and clip the SVG to the round button. */
+.user-avatar.has-art { background: transparent; padding: 0; overflow: hidden; }
+.user-avatar.has-art svg { display: block; width: 100%; height: 100%; }
 /* Install / Add-to-Home-Screen — a download icon sitting just left of the avatar
    (relocated out of the avatar menu). */
 .install-btn {
