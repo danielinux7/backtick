@@ -15,6 +15,11 @@ from .replay import Session, SessionStore
 
 
 async def save_snapshot(db: AsyncSession, sess: Session) -> None:
+    # Replay is a throwaway sandbox — only live sessions (real positions) persist.
+    # Guarding here covers every mutation call site at once; a reload of a replay
+    # session therefore always starts clean.
+    if not sess.is_live:
+        return
     snap = sess.to_snapshot()
     row = await db.get(ReplaySnapshot, sess.id)
     if row is None:

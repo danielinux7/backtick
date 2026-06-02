@@ -214,17 +214,19 @@ async def create_session(
         raise HTTPException(400, f"unsupported tf {req.tf}")
     symbol = req.symbol.upper()
 
-    # One stable session per (user, market, mode). Symbol + tf are views within
-    # it: resuming a mode/symbol/tf re-points the same session (keeping its
-    # trades); a date jump (reset) starts the current symbol's replay fresh.
-    key_row = (await db.execute(
-        select(ReplaySnapshot)
-        .where(ReplaySnapshot.user_id == user.id,
-               ReplaySnapshot.market == req.market,
-               ReplaySnapshot.is_live == req.live)
-        .order_by(ReplaySnapshot.updated_at.desc())
-        .limit(1)
-    )).scalar_one_or_none()
+    # Live mode keeps one stable session per (user, market): resuming re-points
+    # the same session (keeping its positions). Replay is ephemeral and never
+    # persisted, so it has no row to resume — it always starts fresh below.
+    key_row = None
+    if req.live:
+        key_row = (await db.execute(
+            select(ReplaySnapshot)
+            .where(ReplaySnapshot.user_id == user.id,
+                   ReplaySnapshot.market == req.market,
+                   ReplaySnapshot.is_live == True)  # noqa: E712 — SQL boolean
+            .order_by(ReplaySnapshot.updated_at.desc())
+            .limit(1)
+        )).scalar_one_or_none()
 
     def _fresh(sid):
         return store.create(symbol, req.market, req.tf, req.start, req.end,
@@ -277,13 +279,15 @@ async def create_session(
 async def latest_session(
     user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
 ):
-    """Most-recently-touched session for the current user, rehydrated and
-    serialized like GET /{sid}. Lets the frontend restore the last chart
-    (cursor + open/pending/closed trades) on load and after login, instead of
-    always starting a fresh default session. 204 when the user has none."""
+    """Most-recently-touched LIVE session for the current user, rehydrated and
+    serialized like GET /{sid}. Lets the frontend restore the last live chart
+    (cursor + open/pending/closed positions) on load and after login. Replay is
+    ephemeral and never persisted, so it's not restorable here — 204 then has the
+    frontend load the default. 204 when the user has no live session."""
     row = (await db.execute(
         select(ReplaySnapshot)
-        .where(ReplaySnapshot.user_id == user.id)
+        .where(ReplaySnapshot.user_id == user.id,
+               ReplaySnapshot.is_live == True)  # noqa: E712 — SQL boolean
         .order_by(ReplaySnapshot.updated_at.desc())
         .limit(1)
     )).scalar_one_or_none()
@@ -292,11 +296,6 @@ async def latest_session(
     sess = await hydrate_session(db, store, row.sid, user.id)
     if sess is None:
         return Response(status_code=204)
-    # Replay trades are ephemeral: a reload restores the view (symbol/date/cursor)
-    # but starts with an empty trade list, even if the session is still warm
-    # in memory. Live positions are real and stay.
-    if not sess.is_live and sess.trades:
-        sess.trades = []
     return _serialize_session(sess)
 
 

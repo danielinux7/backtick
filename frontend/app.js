@@ -159,6 +159,7 @@
 
   chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
     if (!r) return;
+    enforceRatio(r);                 // keep the candle aspect locked across zoom/pan
     scheduleVolProfileFetch();
     scheduleLiqFetch();
     scheduleFootprintFetch();
@@ -169,11 +170,53 @@
   // anchored on the mouse, so candle shape stays constant across zoom levels.
   // Press R to reset back to autoScale on price.
   let lockedRatio = null;   // dollars per bar — captured on first zoom
+  let curLogical = null;    // our own synchronous copy of the visible logical range
+  let selfZoom = false;     // true only while OUR ctrl+wheel/pinch zoom is driving the time scale
+  let selfZoomTimer = null;
   const priceScale = chart.priceScale("right");
 
   const resetZoomLock = () => {
     lockedRatio = null;
+    selfZoom = false;
+    clearTimeout(selfZoomTimer);
     priceScale.applyOptions({ autoScale: true });
+  };
+
+  // Mark that the next time-scale change(s) are ours (a ctrl+wheel/pinch zoom),
+  // so enforceRatio pins the price to keep the ratio. The debounce keeps it set
+  // across the few-frame async settle + the whole gesture, then clears so a later
+  // axis drag / pan is treated as user-driven.
+  const markSelfZoom = () => {
+    selfZoom = true;
+    clearTimeout(selfZoomTimer);
+    selfZoomTimer = setTimeout(() => { selfZoom = false; }, 150);
+  };
+
+  // Runs on every time-scale (logical range) change. Two cases:
+  //  • Our zoom (selfZoom): the time scale just applied a ctrl+wheel/pinch zoom,
+  //    asynchronously — pin the price span to bars*lockedRatio so the candle
+  //    aspect is preserved. (Doing this here, off the *applied* bar count rather
+  //    than in the wheel handler off the requested span, is what stops the ratio
+  //    inflating under rapid zoom.)
+  //  • Anything else — a price-axis drag, a TIME-axis drag, or a pan: leave the
+  //    price scale exactly where the user put it and just adopt the resulting
+  //    ratio as the new lock. Dragging either axis re-defines the aspect; it must
+  //    never be reverted or turned into a zoom.
+  const enforceRatio = (r) => {
+    if (r) curLogical = { from: r.from, to: r.to };
+    if (lockedRatio === null || !r) return;
+    const bars = r.to - r.from;
+    if (bars <= 0) return;
+    const pr = priceScale.getVisibleRange();
+    if (!pr) return;
+    if (selfZoom) {
+      const centre = (pr.from + pr.to) / 2;
+      const half = (bars * lockedRatio) / 2;
+      priceScale.setVisibleRange({ from: centre - half, to: centre + half });
+    } else {
+      const obs = (pr.to - pr.from) / bars;
+      if (obs > 0 && Math.abs(obs - lockedRatio) / lockedRatio > 0.005) lockedRatio = obs;
+    }
   };
 
   // Shared locked-ratio zoom — Ctrl+Wheel on desktop and 2-finger pinch on
@@ -181,35 +224,39 @@
   // is the cursor / pinch midpoint in viewport coords.
   const applyLockedZoom = (factor, clientX, clientY) => {
     const ts = chart.timeScale();
-    const tr = ts.getVisibleLogicalRange();
+    // Use our own tracked range, not ts.getVisibleLogicalRange() — the latter
+    // lags the async apply, so rapid zoom would read a stale (compounding) span.
+    const tr = curLogical || ts.getVisibleLogicalRange();
     if (!tr) return;
-    const rect = chartEl.getBoundingClientRect();
-    const relX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const relY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
     const tSpan = tr.to - tr.from;
-    const tAnchor = tr.from + tSpan * relX;
     const newTSpan = Math.max(2, tSpan * factor);
+    const pr0 = priceScale.getVisibleRange();
+    if (!pr0) return;
     if (lockedRatio === null) {
-      const pr0 = priceScale.getVisibleRange();
-      if (!pr0) return;
-      const bars = tr.to - tr.from;
-      lockedRatio = bars > 0 ? (pr0.to - pr0.from) / bars : null;
+      lockedRatio = tSpan > 0 ? (pr0.to - pr0.from) / tSpan : null;
       if (!lockedRatio) return;
       priceScale.applyOptions({ autoScale: false });
+    } else {
+      // Re-derive the ratio from the current on-screen price/bars before zooming,
+      // so a price-axis stretch done since the last zoom (no pan/tick in between
+      // to let enforceRatio adopt it) is honoured instead of snapped away.
+      const obs = tSpan > 0 ? (pr0.to - pr0.from) / tSpan : 0;
+      if (obs > 0 && Math.abs(obs - lockedRatio) / lockedRatio > 0.02) lockedRatio = obs;
     }
-    const pr = priceScale.getVisibleRange();
-    if (!pr) return;
-    ts.setVisibleLogicalRange({
-      from: tAnchor - newTSpan * relX,
-      to: tAnchor + newTSpan * (1 - relX),
-    });
-    const pSpan = pr.to - pr.from;
-    const pAnchor = pr.to - relY * pSpan;       // chart y is inverted
-    const newPSpan = newTSpan * lockedRatio;
-    priceScale.setVisibleRange({
-      from: pAnchor - newPSpan * (1 - relY),
-      to: pAnchor + newPSpan * relY,
-    });
+    // Anchor the time zoom on the right edge: the latest candle stays pinned to
+    // the right, zoom just changes how much history is shown to its left. This is
+    // stable across in/out (no drift) and zoom-out grows into history, tripping
+    // the extendHistory backfill below so older candles stream in.
+    const newTo = tr.to;
+    const newFrom = newTo - newTSpan;
+    curLogical = { from: newFrom, to: newTo };   // sync tracker before the async apply
+    markSelfZoom();
+    ts.setVisibleLogicalRange({ from: newFrom, to: newTo });
+    // Price is deliberately NOT set here. The time scale applies asynchronously,
+    // so setting price now (from the *requested* span) races ahead of the bar
+    // count under rapid zoom and inflates the ratio (candles pancake). enforceRatio
+    // sets price from the *applied* bar count in the time scale's settle callback,
+    // so the two axes always move together and the ratio can never blow up.
   };
 
   const wheelZoom = (e) => {
@@ -3140,7 +3187,9 @@
       // load (esp. on mobile) blinks it away before the entrance animation finishes.
       const s = document.getElementById("boot-splash");
       if (s) {
-        const MIN_MS = 900;
+        // Hold the splash twice as long on phones — a fast mobile load otherwise
+        // blinks it away before the entrance animation even registers.
+        const MIN_MS = window.matchMedia("(max-width: 900px)").matches ? 1800 : 900;
         const wait = Math.max(0, MIN_MS - performance.now());
         setTimeout(() => {
           s.classList.add("hide");

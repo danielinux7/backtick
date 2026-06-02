@@ -60,12 +60,13 @@ async def client():
 @pytest.mark.asyncio
 async def test_latest_returns_most_recently_updated_with_trades(client):
     async with client.factory() as db:
+        # /latest is live-only now, so both candidate rows are live sessions.
         db.add_all([
             ReplaySnapshot(sid="old", user_id=TEST_USER_ID, symbol="SOLUSDT",
-                           market="spot", tf="4h", snapshot={},
+                           market="spot", tf="4h", is_live=True, snapshot={},
                            updated_at=dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc)),
             ReplaySnapshot(sid="new", user_id=TEST_USER_ID, symbol="BTCUSDT",
-                           market="spot", tf="1h", snapshot={},
+                           market="spot", tf="1h", is_live=True, snapshot={},
                            updated_at=dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)),
         ])
         await db.commit()
@@ -101,10 +102,12 @@ async def test_client_state_persists_and_restores_via_latest(client):
     # register a session for the user, then POST client_state and read it back
     async with client.factory() as db:
         db.add(ReplaySnapshot(sid="s1", user_id=TEST_USER_ID, symbol="SOLUSDT",
-                              market="spot", tf="4h", snapshot={},
+                              market="spot", tf="4h", is_live=True, snapshot={},
                               updated_at=dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)))
         await db.commit()
-    main.store._sessions["s1"] = _session_obj("s1", "SOLUSDT")
+    s1 = _session_obj("s1", "SOLUSDT")
+    s1.is_live = True            # client_state only persists for live sessions
+    main.store._sessions["s1"] = s1
 
     cs = {
         "indicators": [{"kind": "ema", "period": 200}, {"kind": "cvd"}],
@@ -134,3 +137,43 @@ async def test_latest_ignores_other_users_sessions(client):
 
     r = await client.get("/api/session/latest")
     assert r.status_code == 204         # belongs to user 999, not ours
+
+
+# ---- Replay is ephemeral: only live sessions are persisted / restorable -------
+
+@pytest.mark.asyncio
+async def test_replay_session_is_not_persisted(client):
+    """save_snapshot is a no-op for replay — no row is ever written."""
+    from backend.snapshots import save_snapshot
+    sess = _session_obj("rep", "SOLUSDT")   # is_live defaults False
+    async with client.factory() as db:
+        await save_snapshot(db, sess)
+    async with client.factory() as db:
+        assert await db.get(ReplaySnapshot, "rep") is None
+
+
+@pytest.mark.asyncio
+async def test_live_session_is_persisted(client):
+    """save_snapshot writes a row for live sessions (real positions persist)."""
+    from backend.snapshots import save_snapshot
+    sess = _session_obj("liv", "SOLUSDT")
+    sess.is_live = True
+    async with client.factory() as db:
+        await save_snapshot(db, sess)
+    async with client.factory() as db:
+        row = await db.get(ReplaySnapshot, "liv")
+        assert row is not None and row.is_live is True
+
+
+@pytest.mark.asyncio
+async def test_latest_ignores_replay_rows(client):
+    """A lone replay row is never restored — /latest only resumes live sessions."""
+    async with client.factory() as db:
+        db.add(ReplaySnapshot(sid="rep", user_id=TEST_USER_ID, symbol="SOLUSDT",
+                              market="spot", tf="4h", is_live=False, snapshot={},
+                              updated_at=dt.datetime(2031, 1, 1, tzinfo=dt.timezone.utc)))
+        await db.commit()
+    main.store._sessions["rep"] = _session_obj("rep", "SOLUSDT")
+
+    r = await client.get("/api/session/latest")
+    assert r.status_code == 204
