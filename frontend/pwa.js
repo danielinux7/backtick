@@ -107,6 +107,15 @@
     showHint("Use your browser menu to install");
   });
 
+  // app.js renders the install icon during its own load, which runs *before*
+  // this file — so at that first paint window.__installState didn't exist yet.
+  // Android self-corrects when beforeinstallprompt later fires notify(), but
+  // iOS never fires that event, so the iOS "Add to Home Screen" icon would
+  // never appear. Emit one notification now (app.js's install:available
+  // listener is already attached) so the icon reflects the real state on every
+  // platform.
+  notify();
+
   function showUpdatePrompt() {
     if (document.getElementById("__update_toast__")) return;
     const toast = document.createElement("button");

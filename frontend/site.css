@@ -88,10 +88,14 @@ img { max-width: 100%; display: block; }
 }
 .nav .cta:hover { background: var(--accent-hi); color: #07110f; }
 
-/* Mobile nav: collapse links, keep brand + Launch */
+/* Mobile nav: show the page links (Docs / About / Contact), drop the Launch
+   CTA and the external GitHub link so the bar stays on one line. */
 .nav-toggle { display: none; }
 @media (max-width: 760px) {
-  .nav a:not(.cta) { display: none; }
+  .nav .cta,
+  .nav a[target="_blank"] { display: none; }
+  .nav { gap: 2px; }
+  .nav a { padding: 7px 9px; }
   .site-header .wrap { gap: 10px; }
 }
 
