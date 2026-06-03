@@ -26,7 +26,12 @@ SW = ROOT / "frontend" / "sw.js"
 SHELL = [
     "frontend/index.html",
     "frontend/login.html",
+    "frontend/landing.html",
+    "frontend/docs.html",
+    "frontend/about.html",
+    "frontend/contact.html",
     "frontend/style.css",
+    "frontend/site.css",
     "frontend/avatars.js",
     "frontend/app.js",
     "frontend/symbol-picker.js",

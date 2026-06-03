@@ -1,59 +1,91 @@
-# Chart Replay
+# Backtick
 
-Local web app for replaying Binance candlestick history bar-by-bar and placing hypothetical trades for discretionary backtesting.
+**Replay the market tick by tick.** Backtick is a local-first, open-source web app
+for replaying Binance history candle-by-candle *and* trade-by-trade — with a real
+bid/ask tape, footprint, and hypothetical trades — built for discretionary
+backtesting.
 
-## Features
-- Step / play-pause / rewind through candles (configurable step size and speed)
-- Market and **limit** orders with optional SL/TP entered as % from entry
-- Click on the chart to set limit / SL / TP prices (auto-converted to %)
-- Trades without an SL stay open until you close them manually (no TP auto-exit either)
-- Timeframe per session: 1m / 5m / 15m / 30m / 1h / 4h / 1d
-- Indicators: EMA 20/50/200, RSI 14 (computed in JS, doesn't slow replay)
-- Drawing tools: horizontal price lines, two-click measure with Δprice / %Δ / time / bars
-- Trade log with open & closed P&L, win/loss count, win rate
-- Disk cache (parquet) with gap-fill so re-fetching old ranges is fast and never partial
+🌐 **Live:** [backtick.to](https://backtick.to) · 📖 [Docs](https://backtick.to/docs) · ℹ️ [About](https://backtick.to/about)
 
-## Setup
+![Backtick](frontend/icons/og-image.png)
+
+## Why it's different
+
+Most replay tools just move a candle forward. Backtick surfaces the order flow
+*inside* the bar — the reads other platforms gate behind a premium tier:
+
+- **True time & sales** — every print tagged buy/sell from Binance aggTrades' real
+  `is_buyer_maker` flag (green = aggressive buy at the ask, orange = sell at the
+  bid), with a large-prints percentile highlighter.
+- **Tick-by-tick replay + synced tape** — step or auto-play individual aggTrades as
+  the forming candle rebuilds, with the tape in lockstep; 1×–200×.
+- **Footprint** — per-candle buy/sell volume by price level, so absorption and
+  imbalance are visible inside the bar.
+- **Open source & local-first** — runs on your machine, reads straight from Binance,
+  and your hypothetical trades stay in your own session.
+
+Plus the usual sandbox: candle replay, market/limit trades with SL/TP, indicators
+(EMA / RSI / CVD / Volume / Volume Profile / Liquidations), drawing tools, a
+watchlist, live + replay modes, and an installable PWA.
+
+## Quickstart
+
+Uses a virtualenv (never install into system Python):
+
 ```bash
-python3 -m venv /tmp/chart_replay_venv
-/tmp/chart_replay_venv/bin/pip install -r requirements.txt
+python3 -m venv /tmp/backtick_venv
+/tmp/backtick_venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+/tmp/backtick_venv/bin/uvicorn backend.main:app --reload --port 8765
 ```
 
-## Run
+Open <http://localhost:8765> — the marketing landing is at `/`, the chart app at
+`/app`. It opens on SOLUSDT 4h, roughly two months back, so there's something to
+step through immediately.
+
+## Tests
+
 ```bash
-/tmp/chart_replay_venv/bin/uvicorn backend.main:app --reload --port 8765 \
-  --app-dir /home/danial/Documents/life/trading/chart_replay_app
+/tmp/backtick_venv/bin/pytest -q     # backend unit tests (no network)
+npx playwright test                  # frontend E2E smoke (needs server on :8765)
 ```
-Open <http://localhost:8765>. The page auto-loads SOLUSDT 4h with replay date 60 days back.
 
-## Workflow
-1. Pick a symbol, market (spot/futures), timeframe, replay date (dd/mm/yyyy), and warmup-candle count, then click **Load**.
-2. Warmup candles appear up to and including the candle whose open time equals your replay date — the cursor sits on that candle, and stepping reveals what came after.
-3. Use Next / Play / `←` / `→` to advance. SL/TP are checked against each new candle's high/low.
-4. Place trades via the side panel, or `L` / `S` shortcuts. Click `close` / `cancel` in the trades table to exit or cancel a pending limit.
-
-## Chart tools
-- **🎯 next to a field** (limit price / SL / TP): click the chart at the level you want — for SL/TP this is converted back to a % from entry, with side validated against the "Side for picks" selector.
-- **H-line**: drop a horizontal price line at the next chart click; stays armed so you can drop several. Hotkey `H`.
-- **Measure**: click two points on the chart; result shows Δprice, %Δ, time span, and bar count in the toolbar. Hotkey `M`.
-- **Clear**: removes all H-lines and measurements. `Esc` cancels any armed tool.
-
-## Keyboard
-- `→` step forward, `←` step back
-- `space` toggle play/pause
-- `L` long, `S` short
-- `H` horizontal line, `M` measure
-- `Esc` cancel current tool / pick
+Unit tests cover the riskiest logic — gap-fill (`_missing_ranges`) and trade
+SL/TP/limit fills + snapshot round-trip. The Playwright smoke test hits live
+Binance, so treat a network failure as flaky, not a regression.
 
 ## Layout
+
 ```
 backend/
-  main.py        FastAPI app + routes
-  binance.py     historical klines + parquet cache + gap-fill
-  replay.py      Session / Trade / SessionStore
+  main.py          FastAPI app + chart/replay routes, page routes, /healthz
+  binance.py       historical klines via Binance REST + parquet cache w/ gap-fill
+  replay.py        Session / Trade / SessionStore; SL/TP + limit-fill logic
+  aggtrades.py     aggTrades fetch for tick replay / CVD
+  auth.py, routes_auth.py, db.py, models.py, snapshots.py, exchange_info.py
 frontend/
-  index.html
-  app.js         lightweight-charts wiring, JS-side indicators, tools
-  style.css
-data_cache/      parquet cache (gitignored)
+  landing.html, docs.html, about.html, contact.html   marketing site (no-JS)
+  site.css                                             marketing styles
+  index.html, app.js, style.css                        the chart app
+  avatars.js, symbol-picker.js, pwa.js, auth-modal.js
+  sw.js            service worker (CACHE_VERSION bumped per deploy)
+  manifest.webmanifest, icons/
+scripts/
+  bump_sw_version.py   content-hashes the shell into sw.js CACHE_VERSION
 ```
+
+## Deploy
+
+Deploys to [Render](https://render.com) from `render.yaml` (auto-deploy on push to
+`main`). The build runs `scripts/bump_sw_version.py` so clients pick up new frontend
+assets via the service-worker cache. Secrets — `SESSION_SECRET`, Google OAuth
+(`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) — live in environment variables, never
+in the repo.
+
+## Disclaimer
+
+Backtick is a backtesting and education tool, not financial advice. Markets are
+risky; nothing here is a recommendation to trade.
+
+## License
+
+[MIT](LICENSE) © 2026 Danial Zakaria

@@ -4,7 +4,7 @@ import { test, expect } from '@playwright/test';
 // assert the trade shows up in the trades table. Hits live Binance, so a
 // network failure here is flakiness, not a code regression.
 test('load SOLUSDT, step, place a long, see it in the trades table', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/app');
 
   const longBtn = page.locator('#long-btn');
   const nextBtn = page.locator('#next-1');

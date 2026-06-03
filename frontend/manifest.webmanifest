@@ -2,7 +2,7 @@
   "name": "Backtick — replay & live trading chart",
   "short_name": "Backtick",
   "description": "Replay Binance markets candle-by-candle, place hypothetical trades, and watch them resolve.",
-  "start_url": "/",
+  "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",

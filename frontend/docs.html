@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Docs — Backtick</title>
+  <meta name="description" content="How to use Backtick: replay controls, time & sales, footprint, placing trades, indicators, and keyboard shortcuts." />
+  <link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/static/site.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Backtick home">
+        <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="h-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6fe9da"/><stop offset="1" stop-color="#1f9488"/></linearGradient>
+            <linearGradient id="h-tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c222d"/><stop offset="1" stop-color="#0f141b"/></linearGradient>
+          </defs>
+          <rect x="3" y="3" width="58" height="58" rx="16" fill="url(#h-tile)" stroke="#46d8c6" stroke-opacity="0.5" stroke-width="1.5"/>
+          <g transform="rotate(38 32 32)">
+            <line x1="32" y1="12" x2="32" y2="52" stroke="#4dd0c1" stroke-width="2.6" stroke-linecap="round"/>
+            <rect x="25" y="21.5" width="14" height="21" rx="4" fill="url(#h-body)"/>
+            <rect x="27.6" y="24.5" width="3.2" height="15" rx="1.6" fill="#ffffff" opacity="0.20"/>
+          </g>
+        </svg>
+        <span class="name">Backtick</span>
+      </a>
+      <nav class="nav">
+        <a href="/docs" class="active">Docs</a>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://github.com/danielinux7/backtick" target="_blank" rel="noopener">GitHub</a>
+        <a class="cta" href="/app">Launch app →</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="page-head">
+      <h1>Documentation</h1>
+      <p>Everything you need to replay a market and place hypothetical trades.</p>
+    </div>
+
+    <div class="docs">
+      <!-- Sidebar -->
+      <nav class="docs-nav" aria-label="On this page">
+        <h4>Getting started</h4>
+        <a href="#start">Loading a chart</a>
+        <a href="#modes">Replay vs. Live</a>
+        <h4>Replaying</h4>
+        <a href="#controls">Replay controls</a>
+        <a href="#tape">Time &amp; sales</a>
+        <a href="#footprint">Footprint</a>
+        <h4>Trading</h4>
+        <a href="#trades">Placing trades</a>
+        <a href="#indicators">Indicators &amp; tools</a>
+        <h4>Reference</h4>
+        <a href="#keys">Keyboard shortcuts</a>
+        <a href="#pwa">Install as an app</a>
+      </nav>
+
+      <!-- Body -->
+      <div class="docs-body">
+        <section id="start">
+          <h2>Loading a chart</h2>
+          <p>Open the <a href="/app">app</a> and the top bar holds the setup: a <strong>symbol</strong> field with a searchable picker (type any Binance pair, or pick from your watchlist), a <strong>market</strong> selector (spot or futures), and a <strong>timeframe</strong> dropdown. Backtick opens on SOLUSDT 4h, roughly two months back, so there's something to step through immediately.</p>
+          <div class="callout">No sign-up needed — a guest session starts automatically. Sign in only if you want a watchlist and your live sessions to follow you across devices.</div>
+        </section>
+
+        <section id="modes">
+          <h2>Replay vs. Live</h2>
+          <p>The <strong>mode</strong> selector switches between two ways of watching a market:</p>
+          <ul>
+            <li><strong>Replay</strong> — load history from a chosen <strong>start date</strong> and step the chart forward bar-by-bar (or trade-by-trade). The market is frozen until you advance it, so you can study a move at your own pace. Replay is a throwaway sandbox: it never persists.</li>
+            <li><strong>Live</strong> — stream the real-time Binance feed. Your open live positions are saved, so a reload picks up where you left off.</li>
+          </ul>
+        </section>
+
+        <section id="controls">
+          <h2>Replay controls</h2>
+          <p>In replay, a control bar drives time:</p>
+          <ul>
+            <li><strong>Tick / Candle</strong> pill — choose whether each step advances one full candle or one individual trade (tick). Tick mode rebuilds the forming candle print-by-print.</li>
+            <li><strong>Speed</strong> dropdown — auto-play pace, from 1× up to 200×.</li>
+            <li><strong>Play / Pause</strong> (<kbd>Space</kbd>) — start or stop auto-advance.</li>
+            <li><strong>Next</strong> (<kbd>→</kbd>) and <strong>Prev</strong> (<kbd>←</kbd>) — step one increment forward or back.</li>
+          </ul>
+          <div class="callout">When you reach the latest candle the forward controls go quiet — step back (<kbd>←</kbd>) or pick a new start date to keep going.</div>
+        </section>
+
+        <section id="tape">
+          <h2>Time &amp; sales</h2>
+          <p>Open the <strong>Tape</strong> tab to watch individual prints stream as the chart advances. Each row is colored from Binance's real maker/taker flag:</p>
+          <ul>
+            <li><span style="color:#81c784;font-weight:700">Green</span> — an aggressive <strong>buy</strong> lifting the ask.</li>
+            <li><span style="color:#ffa726;font-weight:700">Orange</span> — an aggressive <strong>sell</strong> hitting the bid.</li>
+          </ul>
+          <p>A <strong>large-prints</strong> slider highlights trades above a size percentile, so block activity stands out from the noise. In tick mode the tape and the forming candle stay in lockstep.</p>
+        </section>
+
+        <section id="footprint">
+          <h2>Footprint</h2>
+          <p>Open the <strong>Indicators</strong> menu (the wrench) and enable <strong>Footprint</strong> to break each candle into buy vs. sell volume at every price level. Zoom in to reveal the per-level numbers — it's how you spot absorption and imbalance inside a bar rather than just reading its body.</p>
+        </section>
+
+        <section id="trades">
+          <h2>Placing trades</h2>
+          <p>The trade side-panel places hypothetical orders against the replayed (or live) price:</p>
+          <ul>
+            <li><strong>Market</strong> or <strong>Limit</strong> — fill now, or rest an order that fills when price trades through it.</li>
+            <li><strong>Qty</strong> — position size.</li>
+            <li><strong>SL% / TP%</strong> — stop-loss and take-profit as a percentage, or drag the pickers directly on the chart.</li>
+            <li><strong>Long</strong> (<kbd>L</kbd>) / <strong>Short</strong> (<kbd>S</kbd>) — open the position.</li>
+          </ul>
+          <p>As you step forward, stops, targets, and limit orders resolve against each candle (or each tick in tick mode). Closed and open positions appear in the <strong>History</strong> tab.</p>
+          <div class="callout">Backtick is built for a discretionary, wide-stop / small-target style — it places exactly the orders you ask for and resolves them against real price action. It won't second-guess your risk model.</div>
+        </section>
+
+        <section id="indicators">
+          <h2>Indicators &amp; drawing tools</h2>
+          <p>From the <strong>Indicators</strong> menu: EMA, RSI, CVD (cumulative volume delta), Volume, Volume Profile, Liquidations, and Footprint. Drawing tools include a horizontal line (<kbd>H</kbd>) and a measure tool (<kbd>M</kbd>) for sizing a move in price and time.</p>
+        </section>
+
+        <section id="keys">
+          <h2>Keyboard shortcuts</h2>
+          <table class="keys">
+            <tr><td><kbd>Space</kbd></td><td>Play / pause auto-advance</td></tr>
+            <tr><td><kbd>→</kbd></td><td>Step forward one candle / tick</td></tr>
+            <tr><td><kbd>←</kbd></td><td>Step back one candle / tick</td></tr>
+            <tr><td><kbd>L</kbd></td><td>Open a long</td></tr>
+            <tr><td><kbd>S</kbd></td><td>Open a short</td></tr>
+            <tr><td><kbd>H</kbd></td><td>Horizontal line tool</td></tr>
+            <tr><td><kbd>M</kbd></td><td>Measure tool</td></tr>
+            <tr><td><kbd>R</kbd></td><td>Reset the zoom / price-to-bar lock</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>Cancel the active tool</td></tr>
+          </table>
+        </section>
+
+        <section id="pwa">
+          <h2>Install as an app</h2>
+          <p>Backtick is a PWA. In a supported browser, use <strong>Install</strong> (desktop address bar) or <strong>Add to Home Screen</strong> (mobile) to launch it in its own window — it opens straight into the chart and works offline for the shell.</p>
+          <p style="margin-top:24px"><a class="btn btn-primary" href="/app">Launch the app →</a></p>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Backtick home">
+        <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="f-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6fe9da"/><stop offset="1" stop-color="#1f9488"/></linearGradient>
+            <linearGradient id="f-tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c222d"/><stop offset="1" stop-color="#0f141b"/></linearGradient>
+          </defs>
+          <rect x="3" y="3" width="58" height="58" rx="16" fill="url(#f-tile)" stroke="#46d8c6" stroke-opacity="0.5" stroke-width="1.5"/>
+          <g transform="rotate(38 32 32)">
+            <line x1="32" y1="12" x2="32" y2="52" stroke="#4dd0c1" stroke-width="2.6" stroke-linecap="round"/>
+            <rect x="25" y="21.5" width="14" height="21" rx="4" fill="url(#f-body)"/>
+            <rect x="27.6" y="24.5" width="3.2" height="15" rx="1.6" fill="#ffffff" opacity="0.20"/>
+          </g>
+        </svg>
+        <span class="name">Backtick</span>
+      </a>
+      <nav class="links">
+        <a href="/docs">Docs</a>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://github.com/danielinux7/backtick" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <div class="copy">Open source · MIT · © 2026 Danial Zakaria · Not financial advice.</div>
+    </div>
+  </footer>
+</body>
+</html>

@@ -49,7 +49,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 .brand span { background: linear-gradient(120deg, #26a69a, #4dd0c1); -webkit-background-clip: text; background-clip: text; color: transparent; }
 /* Header brand: the boot-splash glyph, shrunk down, sitting left of the setup
    row on desktop. Hidden on mobile (the setup strip reclaims that space). */
-#header-brand { flex: 0 0 auto; }
+#header-brand { flex: 0 0 auto; text-decoration: none; cursor: pointer; }
 #header-brand .logo { width: 30px; height: 30px; filter: drop-shadow(0 1px 4px rgba(38, 166, 154, 0.30)); }
 .setup { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .setup input, .setup select, .setup button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 8px; }

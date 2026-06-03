@@ -11,7 +11,7 @@ import { test, expect } from '@playwright/test';
 test('touch: replay loads, mode toggle highlights, market long via the mobile bar', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/app');
 
   // Pick Replay from the custom Mode dropdown — by tap.
   await page.locator('.dd:has(#mode-select) .dd-trigger').tap();

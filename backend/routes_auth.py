@@ -226,7 +226,7 @@ async def google_callback(request: Request, db: AsyncSession = Depends(get_db)):
     if user is None:
         user = await upsert_oauth_user(db, email, google_sub=sub)
     session_token, _ = await create_session_token(db, user.id)
-    resp = RedirectResponse(url="/")
+    resp = RedirectResponse(url="/app")
     resp.set_cookie(value=session_token, **_cookie_kwargs(secure=is_production()))
     return resp
 
@@ -344,6 +344,6 @@ async def apple_callback(request: Request, db: AsyncSession = Depends(get_db)):
     # restores this account's own last session anyway.
     user = await upsert_oauth_user(db, email or "", apple_sub=sub)
     session_token, _ = await create_session_token(db, user.id)
-    resp = RedirectResponse(url="/", status_code=303)   # 303: POST → GET
+    resp = RedirectResponse(url="/app", status_code=303)   # 303: POST → GET
     resp.set_cookie(value=session_token, **_cookie_kwargs(secure=is_production()))
     return resp

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About — Backtick</title>
+  <meta name="description" content="Why Backtick exists: real order-flow, tick replay, and footprint for discretionary backtesting — open source and local-first." />
+  <link rel="icon" href="/static/icons/favicon-32.png" sizes="32x32" />
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/static/site.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Backtick home">
+        <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="h-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6fe9da"/><stop offset="1" stop-color="#1f9488"/></linearGradient>
+            <linearGradient id="h-tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c222d"/><stop offset="1" stop-color="#0f141b"/></linearGradient>
+          </defs>
+          <rect x="3" y="3" width="58" height="58" rx="16" fill="url(#h-tile)" stroke="#46d8c6" stroke-opacity="0.5" stroke-width="1.5"/>
+          <g transform="rotate(38 32 32)">
+            <line x1="32" y1="12" x2="32" y2="52" stroke="#4dd0c1" stroke-width="2.6" stroke-linecap="round"/>
+            <rect x="25" y="21.5" width="14" height="21" rx="4" fill="url(#h-body)"/>
+            <rect x="27.6" y="24.5" width="3.2" height="15" rx="1.6" fill="#ffffff" opacity="0.20"/>
+          </g>
+        </svg>
+        <span class="name">Backtick</span>
+      </a>
+      <nav class="nav">
+        <a href="/docs">Docs</a>
+        <a href="/about" class="active">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://github.com/danielinux7/backtick" target="_blank" rel="noopener">GitHub</a>
+        <a class="cta" href="/app">Launch app →</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div class="page-head">
+      <h1>About Backtick</h1>
+      <p>Real order-flow practice, without a subscription.</p>
+    </div>
+
+    <div class="prose section" style="padding-top:24px">
+      <h2>Why it exists</h2>
+      <p>Most chart-replay tools show you a candle moving forward. That's useful, but a candle hides the thing that actually moved price: the order flow inside it — who was the aggressor, where size traded, where bids or offers got absorbed. The tools that surface that are usually locked behind a premium tier, and your data lives on someone else's servers.</p>
+      <p>Backtick was built for <strong>discretionary backtesting</strong>: stepping through history the way you'd actually trade it, reading the tape and the footprint, and placing the trades you'd really take — to see how they'd have resolved against how price <em>actually printed</em>.</p>
+
+      <h2>What makes it different</h2>
+      <ul>
+        <li><strong>True time &amp; sales.</strong> Every print is tagged buy or sell from Binance aggTrades' real <code>is_buyer_maker</code> flag — not inferred from the candle. Aggressive buys at the ask show green; sells at the bid show orange.</li>
+        <li><strong>Tick-by-tick replay with a synced tape.</strong> Step or auto-play individual trades while the forming candle rebuilds and the tape streams in lockstep, from 1× to 200×.</li>
+        <li><strong>Footprint.</strong> Per-candle buy/sell volume by price level, so absorption and imbalance are visible inside the bar.</li>
+        <li><strong>Local-first &amp; open source.</strong> It runs on your machine, reads straight from Binance, and your hypothetical trades stay in your own session. The whole thing is MIT-licensed — read it, fork it, self-host it.</li>
+      </ul>
+
+      <h2>An honest note on style</h2>
+      <p>Backtick is opinionated toward a specific discretionary approach — wide stops, smaller targets, a high hit-rate game. It places exactly the orders you ask for and resolves them faithfully against real price action. It won't redesign your risk model or nag you about reward-to-risk; that's a deliberate choice, not an oversight.</p>
+
+      <h2>How it's built</h2>
+      <p>A small, legible stack: a <strong>FastAPI</strong> backend that fetches and caches Binance klines and aggTrades, the replay/trade engine in plain Python, and a <strong>vanilla-JS</strong> front end on <a href="https://github.com/tradingview/lightweight-charts" target="_blank" rel="noopener">TradingView's lightweight-charts</a> — no framework, installable as a PWA. It deploys as a single service and runs just as happily on localhost.</p>
+
+      <p style="margin-top:30px">
+        <a class="btn btn-primary" href="/app">Try the replay →</a>
+        &nbsp;
+        <a class="btn btn-ghost" href="https://github.com/danielinux7/backtick" target="_blank" rel="noopener">Read the source</a>
+      </p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Backtick home">
+        <svg class="logo" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="f-body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#6fe9da"/><stop offset="1" stop-color="#1f9488"/></linearGradient>
+            <linearGradient id="f-tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1c222d"/><stop offset="1" stop-color="#0f141b"/></linearGradient>
+          </defs>
+          <rect x="3" y="3" width="58" height="58" rx="16" fill="url(#f-tile)" stroke="#46d8c6" stroke-opacity="0.5" stroke-width="1.5"/>
+          <g transform="rotate(38 32 32)">
+            <line x1="32" y1="12" x2="32" y2="52" stroke="#4dd0c1" stroke-width="2.6" stroke-linecap="round"/>
+            <rect x="25" y="21.5" width="14" height="21" rx="4" fill="url(#f-body)"/>
+            <rect x="27.6" y="24.5" width="3.2" height="15" rx="1.6" fill="#ffffff" opacity="0.20"/>
+          </g>
+        </svg>
+        <span class="name">Backtick</span>
+      </a>
+      <nav class="links">
+        <a href="/docs">Docs</a>
+        <a href="/about">About</a>
+        <a href="/contact">Contact</a>
+        <a href="https://github.com/danielinux7/backtick" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <div class="copy">Open source · MIT · © 2026 Danial Zakaria · Not financial advice.</div>
+    </div>
+  </footer>
+</body>
+</html>

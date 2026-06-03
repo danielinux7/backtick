@@ -201,7 +201,7 @@
           try { msg = JSON.parse(msg).detail || msg; } catch (_) {}
           throw new Error(msg);
         }
-        window.location.href = "/";
+        window.location.href = "/app";
       } catch (err) {
         errEl.textContent = err.message || "Something went wrong";
       } finally {
@@ -221,7 +221,7 @@
           try { msg = JSON.parse(msg).detail || msg; } catch (_) {}
           throw new Error(msg);
         }
-        window.location.href = "/";
+        window.location.href = "/app";
       } catch (err) {
         errEl.textContent = err.message || "Could not start guest session";
       }

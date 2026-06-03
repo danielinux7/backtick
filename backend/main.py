@@ -28,7 +28,14 @@ from .snapshots import delete_snapshot, hydrate_session, save_snapshot
 ROOT = Path(__file__).resolve().parent.parent
 FRONTEND = ROOT / "frontend"
 
-app = FastAPI(title="Chart Replay")
+# Relocate the interactive API docs under /api so the public marketing page can
+# own /docs (FastAPI's built-in Swagger route would otherwise shadow it).
+app = FastAPI(
+    title="Chart Replay",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
 store = SessionStore()
 
 app.add_middleware(
@@ -888,11 +895,18 @@ async def delete_session(
 
 
 @app.get("/")
+def landing_page() -> FileResponse:
+    """Public marketing landing — static, no auth cookie. The chart app lives
+    at /app; visitors click "Launch app" to get there."""
+    return FileResponse(FRONTEND / "landing.html")
+
+
+@app.get("/app")
 async def index(
     user: User | None = Depends(current_user_optional),
     db: AsyncSession = Depends(get_db),
 ):
-    """Chart-first landing: no auth wall. If the visitor has no auth cookie,
+    """Chart-first app: no auth wall. If the visitor has no auth cookie,
     auto-create an anonymous guest user so they can immediately try the app.
     They can sign in or sign up later via the header link."""
     resp = FileResponse(FRONTEND / "index.html")
@@ -905,6 +919,21 @@ async def index(
 @app.get("/login")
 def login_page() -> FileResponse:
     return FileResponse(FRONTEND / "login.html")
+
+
+@app.get("/docs")
+def docs_page() -> FileResponse:
+    return FileResponse(FRONTEND / "docs.html")
+
+
+@app.get("/about")
+def about_page() -> FileResponse:
+    return FileResponse(FRONTEND / "about.html")
+
+
+@app.get("/contact")
+def contact_page() -> FileResponse:
+    return FileResponse(FRONTEND / "contact.html")
 
 
 # Service workers can only intercept requests inside their served scope, so

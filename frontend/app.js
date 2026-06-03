@@ -620,8 +620,8 @@
       logout.addEventListener("click", async () => {
         closeUserMenu(menu);
         try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
-        // Drop the cookie + back to /, which auto-provisions a fresh guest.
-        window.location.href = "/";
+        // Drop the cookie + back to /app, which auto-provisions a fresh guest.
+        window.location.href = "/app";
       });
       menu.appendChild(logout);
     }
