@@ -66,6 +66,10 @@
         <section id="start">
           <h2>Loading a chart</h2>
           <p>Open the <a href="/app">app</a> and the top bar holds the setup: a <strong>symbol</strong> field with a searchable picker (type any Binance pair, or pick from your watchlist), a <strong>market</strong> selector (spot or futures), and a <strong>timeframe</strong> dropdown. Backtick opens on SOLUSDT 4h, roughly two months back, so there's something to step through immediately.</p>
+          <figure class="docs-fig">
+            <img src="/static/screenshots/docs-setup.png" alt="The setup bar: mode, symbol, market, timeframe" loading="lazy" />
+            <figcaption>The setup bar — mode, symbol, market, and timeframe.</figcaption>
+          </figure>
           <div class="callout">No sign-up needed — a guest session starts automatically. Sign in only if you want a watchlist and your live sessions to follow you across devices.</div>
         </section>
 
@@ -76,6 +80,10 @@
             <li><strong>Replay</strong> — load history from a chosen <strong>start date</strong> and step the chart forward bar-by-bar (or trade-by-trade). The market is frozen until you advance it, so you can study a move at your own pace. Replay is a throwaway sandbox: it never persists.</li>
             <li><strong>Live</strong> — stream the real-time Binance feed. Your open live positions are saved, so a reload picks up where you left off.</li>
           </ul>
+          <figure class="docs-fig">
+            <img src="/static/screenshots/docs-mode.png" alt="The mode dropdown open, showing Live and Replay" loading="lazy" />
+            <figcaption>The mode selector switches between Replay and Live.</figcaption>
+          </figure>
         </section>
 
         <section id="controls">
@@ -87,6 +95,10 @@
             <li><strong>Play / Pause</strong> (<kbd>Space</kbd>) — start or stop auto-advance.</li>
             <li><strong>Next</strong> (<kbd>→</kbd>) and <strong>Prev</strong> (<kbd>←</kbd>) — step one increment forward or back.</li>
           </ul>
+          <figure class="docs-fig">
+            <img src="/static/screenshots/docs-controls.png" alt="Replay control bar: tick/candle toggle, speed, and step buttons" loading="lazy" />
+            <figcaption>The replay bar: tick/candle toggle, speed, and prev / play / next.</figcaption>
+          </figure>
           <div class="callout">When you reach the latest candle the forward controls go quiet — step back (<kbd>←</kbd>) or pick a new start date to keep going.</div>
         </section>
 
@@ -98,11 +110,19 @@
             <li><span style="color:#ffa726;font-weight:700">Orange</span> — an aggressive <strong>sell</strong> hitting the bid.</li>
           </ul>
           <p>A <strong>large-prints</strong> slider highlights trades above a size percentile, so block activity stands out from the noise. In tick mode the tape and the forming candle stay in lockstep.</p>
+          <figure class="docs-fig">
+            <img src="/static/screenshots/docs-tape.png" alt="Time & sales tape with green buy and red sell prints" loading="lazy" />
+            <figcaption>Green prints are aggressive buys; red are aggressive sells. The slider sets the large-print threshold.</figcaption>
+          </figure>
         </section>
 
         <section id="footprint">
           <h2>Footprint</h2>
           <p>Open the <strong>Indicators</strong> menu (the wrench) and enable <strong>Footprint</strong> to break each candle into buy vs. sell volume at every price level. Zoom in to reveal the per-level numbers — it's how you spot absorption and imbalance inside a bar rather than just reading its body.</p>
+          <figure class="docs-fig tall">
+            <img src="/static/screenshots/docs-footprint.png" alt="Footprint: buy volume on the left, sell volume on the right, per price level" loading="lazy" />
+            <figcaption>Inside one candle: buy volume (left, teal) vs. sell volume (right, red) at each price level.</figcaption>
+          </figure>
         </section>
 
         <section id="trades">
@@ -115,12 +135,20 @@
             <li><strong>Long</strong> (<kbd>L</kbd>) / <strong>Short</strong> (<kbd>S</kbd>) — open the position.</li>
           </ul>
           <p>As you step forward, stops, targets, and limit orders resolve against each candle (or each tick in tick mode). Closed and open positions appear in the <strong>History</strong> tab.</p>
+          <figure class="docs-fig">
+            <img src="/static/screenshots/docs-trade.png" alt="Place-trade panel: Market/Limit type, quantity, SL% and TP%, Long/Short" loading="lazy" />
+            <figcaption>The order panel: Market or Limit, quantity, SL% / TP% (or pick them on the chart), then Long or Short.</figcaption>
+          </figure>
           <div class="callout">Backtick is built for a discretionary, wide-stop / small-target style — it places exactly the orders you ask for and resolves them against real price action. It won't second-guess your risk model.</div>
         </section>
 
         <section id="indicators">
           <h2>Indicators &amp; drawing tools</h2>
           <p>From the <strong>Indicators</strong> menu: EMA, RSI, CVD (cumulative volume delta), Volume, Volume Profile, Liquidations, and Footprint. Drawing tools include a horizontal line (<kbd>H</kbd>) and a measure tool (<kbd>M</kbd>) for sizing a move in price and time.</p>
+          <figure class="docs-fig">
+            <img src="/static/screenshots/docs-indicators.png" alt="The indicators menu listing EMA, RSI, CVD, Volume, Vol Profile, Liq, Footprint" loading="lazy" />
+            <figcaption>The indicators menu — toggle any overlay on or off.</figcaption>
+          </figure>
         </section>
 
         <section id="keys">

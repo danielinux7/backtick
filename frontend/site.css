@@ -224,6 +224,16 @@ table.keys td:first-child { width: 130px; white-space: nowrap; }
   background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
   border-radius: 8px; padding: 12px 16px; margin: 16px 0; font-size: 14px; color: var(--text);
 }
+/* Section screenshots: render at natural size (captured at CSS px so they stay
+   crisp), boxed on the panel bg, with a muted caption. */
+.docs-fig { margin: 20px 0 8px; }
+.docs-fig img {
+  max-width: 100%; height: auto; display: block;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+}
+.docs-fig.tall img { max-height: 460px; width: auto; }
+.docs-fig figcaption { color: var(--muted); font-size: 13px; margin-top: 9px; }
 @media (max-width: 760px) {
   .docs { grid-template-columns: 1fr; gap: 0; }
   .docs-nav { display: none; }
