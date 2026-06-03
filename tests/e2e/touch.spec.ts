@@ -13,21 +13,21 @@ test('touch: replay loads, mode toggle highlights, market long via the mobile ba
 }) => {
   await page.goto('/app');
 
-  // Pick Replay from the custom Mode dropdown — by tap.
-  await page.locator('.dd:has(#mode-select) .dd-trigger').tap();
-  await page.locator('.dd:has(#mode-select) .dd-row', { hasText: 'Replay' }).tap();
+  // Pick Replay from the segmented Live/Replay toggle — by tap.
+  await page.locator('#mode-toggle button[data-mode="replay"]').tap();
 
   // Session loaded → the Long button un-disables. It's hidden on mobile, but it
   // still tracks session state, so toBeEnabled is a reliable readiness signal.
   await expect(page.locator('#long-btn')).toBeEnabled({ timeout: 30_000 });
 
   // Tick/candle toggle must highlight purely from .active — there is no hover on
-  // touch. rgb(38, 166, 154) == #26a69a (teal).
+  // touch. The active pill paints a teal gradient (background-image), so assert
+  // the gradient is present rather than a flat background-color.
   const candle = page.locator('#speed-mode button[data-mode="candle"]');
   const tick = page.locator('#speed-mode button[data-mode="tick"]');
   await candle.tap();
   await expect(candle).toHaveClass(/\bactive\b/);
-  await expect(candle).toHaveCSS('background-color', 'rgb(38, 166, 154)');
+  await expect(candle).toHaveCSS('background-image', /linear-gradient/);
   await expect(tick).not.toHaveClass(/\bactive\b/);
 
   // Step a candle, then tap Buy on the fixed order bar → market long. A plain

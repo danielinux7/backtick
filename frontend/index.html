@@ -94,10 +94,17 @@
       <span>Backtick</span>
     </a>
     <form id="setup-form" class="setup">
-      <select name="mode" id="mode-select" title="Replay = historical chart; Live = real-time Binance stream">
+      <!-- Live/Replay segmented toggle drives the hidden #mode-select (kept so the
+           form value + the existing change handler stay unchanged). -->
+      <div class="mode-pill mode-toggle" id="mode-toggle" role="tablist" aria-label="Live or replay data">
+        <button type="button" data-mode="live" role="tab" aria-selected="true" title="Real-time Binance stream">Live</button>
+        <button type="button" data-mode="replay" role="tab" aria-selected="false" title="Replay historical candles">Replay</button>
+      </div>
+      <select name="mode" id="mode-select" hidden>
         <option value="live" selected>Live</option>
         <option value="replay">Replay</option>
       </select>
+      <div class="setup-capsule">
       <div class="symbol-picker" id="symbol-picker">
         <input name="symbol" id="symbol-input" placeholder="SOLUSDT" value="SOLUSDT" autocomplete="off" required />
         <div class="symbol-popover" id="symbol-popover" hidden>
@@ -116,8 +123,9 @@
         <option value="futures">futures</option>
       </select>
       <select name="tf" id="tf-select"></select>
+      </div><!-- /.setup-capsule -->
       <input name="replay_date" id="replay-date" placeholder="dd/mm/yyyy" />
-      <span id="live-indicator" class="live-indicator" style="display:none">● LIVE</span>
+      <span id="live-indicator" class="live-indicator" style="display:none"><span class="live-dot" aria-hidden="true"></span>LIVE</span>
     </form>
     <div id="status"></div>
     <div id="user-info" class="user-info"></div>
@@ -129,6 +137,9 @@
         <div id="chart"></div>
         <div id="arm-hint" class="arm-hint" style="display:none"></div>
         <span id="measure-summary" class="measure-readout"></span>
+        <!-- Time left until the current candle closes (live = real clock; tick
+             replay = from the last replayed tick). Hidden in candle replay. -->
+        <div id="candle-countdown" class="candle-countdown" hidden></div>
         <div id="replay-end-hint" class="replay-end-hint" hidden>Replay reached the latest candle — step back (◀) or pick a new start date to keep trading.</div>
 
         <div class="overlay-launchers">

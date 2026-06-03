@@ -201,6 +201,7 @@
           try { msg = JSON.parse(msg).detail || msg; } catch (_) {}
           throw new Error(msg);
         }
+        try { sessionStorage.removeItem("bt-splash-seen"); } catch (_) {}
         window.location.href = "/app";
       } catch (err) {
         errEl.textContent = err.message || "Something went wrong";
@@ -221,11 +222,20 @@
           try { msg = JSON.parse(msg).detail || msg; } catch (_) {}
           throw new Error(msg);
         }
+        try { sessionStorage.removeItem("bt-splash-seen"); } catch (_) {}
         window.location.href = "/app";
       } catch (err) {
         errEl.textContent = err.message || "Could not start guest session";
       }
     });
+
+    // OAuth start links bounce out and back to /app — clear the splash-seen flag
+    // so the boot splash replays when the user returns.
+    document.querySelectorAll('a[href^="/api/auth/"]').forEach((a) =>
+      a.addEventListener("click", () => {
+        try { sessionStorage.removeItem("bt-splash-seen"); } catch (_) {}
+      })
+    );
 
     // Detect current guest cookie, then hide the now-redundant button and
     // tweak the copy so creating an account is clearly "save what I'm

@@ -63,11 +63,12 @@
   const chart = LightweightCharts.createChart(chartEl, {
     autoSize: true,
     layout: {
-      background: { color: "#131722" }, textColor: "#d1d4dc", attributionLogo: false,
+      background: { color: "#000000" }, textColor: "#d1d4dc", attributionLogo: false,
       // Themed native pane separator (drag to resize indicator sub-panes).
       panes: { enableResize: true, separatorColor: "#ffffff", separatorHoverColor: "#ffffff" },
     },
-    grid: { vertLines: { color: "#1e222d" }, horzLines: { color: "#1e222d" } },
+    // Gridless on a black background — cleaner read of price action.
+    grid: { vertLines: { visible: false }, horzLines: { visible: false } },
     timeScale: {
       timeVisible: true, secondsVisible: false, borderColor: "#2a2e39",
       // lightweight-charts treats `time` (unix seconds) as UTC by default;
@@ -243,12 +244,23 @@
       const obs = tSpan > 0 ? (pr0.to - pr0.from) / tSpan : 0;
       if (obs > 0 && Math.abs(obs - lockedRatio) / lockedRatio > 0.02) lockedRatio = obs;
     }
-    // Anchor the time zoom on the right edge: the latest candle stays pinned to
-    // the right, zoom just changes how much history is shown to its left. This is
-    // stable across in/out (no drift) and zoom-out grows into history, tripping
-    // the extendHistory backfill below so older candles stream in.
-    const newTo = tr.to;
-    const newFrom = newTo - newTSpan;
+    // Anchor on the cursor (or pinch midpoint) so zoom-in homes in on what you're
+    // pointing at — but never reveal blank space to the right of the latest candle:
+    // clamp the right edge so it can only move left. With the cursor at/near the
+    // right edge, and on any zoom-out, this naturally falls back to the old
+    // right-edge anchor (zoom-out grows into history, tripping extendHistory).
+    const rect = chartEl.getBoundingClientRect();
+    const anchorLogical = ts.coordinateToLogical(clientX - rect.left);
+    let newFrom, newTo;
+    if (anchorLogical == null || tSpan <= 0) {
+      newTo = tr.to;
+      newFrom = newTo - newTSpan;
+    } else {
+      const frac = (anchorLogical - tr.from) / tSpan;   // cursor position, 0..1
+      newFrom = anchorLogical - frac * newTSpan;
+      newTo = newFrom + newTSpan;
+      if (newTo > tr.to) { newTo = tr.to; newFrom = newTo - newTSpan; }   // no right whitespace
+    }
     curLogical = { from: newFrom, to: newTo };   // sync tracker before the async apply
     markSelfZoom();
     ts.setVisibleLogicalRange({ from: newFrom, to: newTo });
@@ -620,6 +632,9 @@
       logout.addEventListener("click", async () => {
         closeUserMenu(menu);
         try { await api("/api/auth/logout", { method: "POST" }); } catch (_) {}
+        // Replay the boot splash on the way out (the reload below otherwise skips
+        // it — bt-splash-seen is already set for this tab).
+        try { sessionStorage.removeItem("bt-splash-seen"); } catch (_) {}
         // Drop the cookie + back to /app, which auto-provisions a fresh guest.
         window.location.href = "/app";
       });
@@ -653,13 +668,42 @@
     slot.appendChild(menu);
   }
   renderUserInfo();
+
+  // Replay the boot splash on in-page auth changes. The modal login/register
+  // path doesn't reload, so the natural boot-splash never fires — re-inject a
+  // copy of its markup and fade it out. Capture the HTML now, before the splash
+  // element is removed at the end of init.
+  const bootSplashHTML = document.getElementById("boot-splash")?.outerHTML || null;
+  const replaySplash = () => {
+    if (!bootSplashHTML) return;
+    document.getElementById("boot-splash")?.remove();
+    document.documentElement.classList.remove("bt-no-splash");   // allow it to show
+    const tpl = document.createElement("div");
+    tpl.innerHTML = bootSplashHTML;
+    const el = tpl.firstElementChild;
+    if (!el) return;
+    el.classList.remove("hide");
+    document.body.appendChild(el);
+    void el.offsetWidth;                                         // reflow → fade runs
+    setTimeout(() => { el.classList.add("hide"); setTimeout(() => el.remove(), 450); }, 900);
+  };
+
   window.addEventListener("auth:changed", async () => {
+    replaySplash();
     renderUserInfo();
     // Login/logout swaps identity → show this account's own most-recent saved
     // session (or the default if it has none), discarding the guest chart.
     if (!(await restoreLatest())) loadSession();
   });
   window.addEventListener("install:available", () => renderUserInfo());
+
+  // OAuth start links navigate away and bounce back to /app; clear the
+  // splash-seen flag so the boot splash replays on return.
+  document.addEventListener("click", (e) => {
+    if (e.target.closest?.('a[href^="/api/auth/"]')) {
+      try { sessionStorage.removeItem("bt-splash-seen"); } catch (_) {}
+    }
+  });
 
   // ---- Volume profile (aggTrade-bucketed, with buy/sell split per level)
   // Backend computes the profile for the currently-visible time range; we
@@ -1392,6 +1436,39 @@
       `<span>${wins}W / ${losses}L (${winRate}%)</span>`;
   };
 
+  // ---- Candle-close countdown (bottom-right of the chart).
+  //  • Live: real clock counting down to the next candle close.
+  //  • Tick replay: simulated time-left of the forming candle, from the last
+  //    replayed tick (session.current_time advances with each tick).
+  //  • Candle replay / idle: hidden (no forming candle).
+  const countdownEl = document.getElementById("candle-countdown");
+  const fmtCountdown = (secs) => {
+    secs = Math.max(0, Math.floor(secs));
+    const d = Math.floor(secs / 86400);
+    const h = Math.floor((secs % 86400) / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    const pad = (n) => String(n).padStart(2, "0");
+    if (d > 0) return `${d}d ${pad(h)}:${pad(m)}`;
+    if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+    return `${pad(m)}:${pad(s)}`;
+  };
+  const updateCountdown = () => {
+    if (!countdownEl) return;
+    const tfSec = session && TF_SECONDS[session.tf];
+    const show = session && tfSec && (session.is_live || session.in_tick);
+    if (!show) { countdownEl.hidden = true; return; }
+    // `now` is the wall clock in live, the simulated clock in tick replay.
+    const now = session.is_live ? (Date.now() / 1000) : (session.current_time || 0);
+    if (!now) { countdownEl.hidden = true; return; }
+    // The forming candle's open is the tf-aligned floor of `now`; it closes one
+    // timeframe later. (Binance kline opens are aligned to the same boundaries.)
+    const closeTs = (Math.floor(now / tfSec) + 1) * tfSec;
+    countdownEl.textContent = fmtCountdown(closeTs - now);
+    countdownEl.hidden = false;
+  };
+  setInterval(updateCountdown, 1000);   // drives the live tick; cheap when hidden
+
   // `opts` is either the legacy `isNew` boolean or an options object.
   // keepCandles: skip the candle re-`setData` (and indicator recompute) when
   // only trades changed — placing/closing an order shouldn't wipe & rebuild the
@@ -1413,6 +1490,7 @@
     const tradingDisabled = !session.is_live && atEnd;
     $("#mark-info").textContent = `Mark: ${session.current_price.toFixed(4)}`;
     updateBarPrice(session.current_price);
+    updateCountdown();   // refresh time-to-close on every session change
     $("#back-1").disabled = session.cursor <= 0;
     $("#next-1").disabled = atEnd;
     $("#play").disabled = atEnd;
@@ -1934,20 +2012,39 @@
       }).catch(() => {});
     }, 600);
   };
+  // Desktop SL/TP: disable the % field + its 🎯 picker and gray the whole group
+  // when the toggle is off. `on` = checkbox checked.
+  const setSltpEnabled = (input, on) => {
+    if (!input) return;
+    input.disabled = !on;
+    const grp = input.closest(".sltp-group");
+    grp?.classList.toggle("is-off", !on);
+    const pick = grp?.querySelector(".pick");
+    if (pick) pick.disabled = !on;
+  };
+  // Mobile SL/TP: gray + disable the % field when its chip is un-pressed.
+  const syncMobileSltpField = (fieldSel, on) => {
+    const input = $(fieldSel);
+    if (!input) return;
+    input.disabled = !on;
+    input.closest(".mtb-pct-wrap")?.classList.toggle("is-off", !on);
+  };
   const applyTradeDefaults = (td) => {
     if (!td) return;
     const d = td.desktop || {};
     if ($("#t-qty") && "qty" in d) $("#t-qty").value = d.qty;
     if ($("#use-sl")) $("#use-sl").checked = !!d.slOn;
-    if ($("#t-sl-pct")) { $("#t-sl-pct").value = d.slOn ? (d.slPct ?? "") : ""; $("#t-sl-pct").disabled = !d.slOn; }
+    if ($("#t-sl-pct")) { $("#t-sl-pct").value = d.slOn ? (d.slPct ?? "") : ""; setSltpEnabled($("#t-sl-pct"), !!d.slOn); }
     if ($("#use-tp")) $("#use-tp").checked = !!d.tpOn;
-    if ($("#t-tp-pct")) { $("#t-tp-pct").value = d.tpOn ? (d.tpPct ?? "") : ""; $("#t-tp-pct").disabled = !d.tpOn; }
+    if ($("#t-tp-pct")) { $("#t-tp-pct").value = d.tpOn ? (d.tpPct ?? "") : ""; setSltpEnabled($("#t-tp-pct"), !!d.tpOn); }
     const m = td.mobile || {};
     if ($("#m-lots") && "lots" in m) $("#m-lots").value = m.lots;
     if ($("#m-use-sl")) $("#m-use-sl").setAttribute("aria-pressed", m.slOn ? "true" : "false");
     if ($("#m-sl-pct") && "slPct" in m) $("#m-sl-pct").value = m.slPct;
+    syncMobileSltpField("#m-sl-pct", !!m.slOn);
     if ($("#m-use-tp")) $("#m-use-tp").setAttribute("aria-pressed", m.tpOn ? "true" : "false");
     if ($("#m-tp-pct") && "tpPct" in m) $("#m-tp-pct").value = m.tpPct;
+    syncMobileSltpField("#m-tp-pct", !!m.tpOn);
   };
   const applyClientState = (cs) => {
     if (!cs) return;
@@ -2880,7 +2977,7 @@
       // the correct direction at placement (no need for an explicit pick side).
       const pct = Math.abs((price - ref) / ref) * 100;
       useBox.checked = true;
-      targetInput.disabled = false;
+      setSltpEnabled(targetInput, true);
       targetInput.value = pct.toFixed(2);
       setStatus(`${armedFor.toUpperCase()} set to ${pct.toFixed(2)}% (price ${price.toFixed(getPrecision(price))})`);
       disarm();
@@ -2904,15 +3001,29 @@
 
   // ---- Wire up
   const modeSelect = $("#mode-select");
+  const modeToggle = $("#mode-toggle");
   const refreshModeUI = () => {
     const live = modeSelect.value === "live";
     document.body.classList.toggle("live-mode", live);
     document.body.classList.toggle("replay-mode", !live);   // gates the date picker
     $("#live-indicator").style.display = live ? "" : "none";
+    // keep the segmented toggle in lockstep with the (hidden) select
+    modeToggle?.querySelectorAll("button[data-mode]").forEach((b) => {
+      const on = (b.dataset.mode === "live") === live;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-selected", String(on));
+    });
   };
   modeSelect.addEventListener("change", () => {
     refreshModeUI();
     loadSession();                          // auto-reload in either direction
+  });
+  // Segmented Live/Replay toggle drives the hidden select (reuses its handler).
+  modeToggle?.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-mode]");
+    if (!btn || btn.dataset.mode === modeSelect.value) return;
+    modeSelect.value = btn.dataset.mode;
+    modeSelect.dispatchEvent(new Event("change"));
   });
   refreshModeUI();
 
@@ -2960,8 +3071,11 @@
   });
   const toggleChip = (btn) =>
     btn.setAttribute("aria-pressed", btn.getAttribute("aria-pressed") === "true" ? "false" : "true");
-  $("#m-use-sl")?.addEventListener("click", () => { toggleChip($("#m-use-sl")); saveClientState(); });
-  $("#m-use-tp")?.addEventListener("click", () => { toggleChip($("#m-use-tp")); saveClientState(); });
+  $("#m-use-sl")?.addEventListener("click", () => { toggleChip($("#m-use-sl")); syncMobileSltpField("#m-sl-pct", chipOn("#m-use-sl")); saveClientState(); });
+  $("#m-use-tp")?.addEventListener("click", () => { toggleChip($("#m-use-tp")); syncMobileSltpField("#m-tp-pct", chipOn("#m-use-tp")); saveClientState(); });
+  // Initial sync so a default-off chip starts grayed (before any restore).
+  syncMobileSltpField("#m-sl-pct", chipOn("#m-use-sl"));
+  syncMobileSltpField("#m-tp-pct", chipOn("#m-use-tp"));
 
   const mobileMarketOrder = async (side) => {
     if (!session) return;
@@ -3153,11 +3267,12 @@
   // SL/TP toggle behavior
   const wireToggle = (box, input) => {
     box.addEventListener("change", () => {
-      input.disabled = !box.checked;
+      setSltpEnabled(input, box.checked);
       if (!box.checked) { input.value = ""; clearFieldError(input); }
       else input.focus();
       saveClientState();
     });
+    setSltpEnabled(input, box.checked);   // initial sync (default-off starts grayed)
   };
   wireToggle($("#use-sl"), $("#t-sl-pct"));
   wireToggle($("#use-tp"), $("#t-tp-pct"));

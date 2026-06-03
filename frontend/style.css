@@ -1,4 +1,9 @@
 * { box-sizing: border-box; }
+/* Make the `hidden` attribute win over component `display:` rules. Buttons like
+   .apple-btn / .google-btn set `display:flex`, which otherwise overrides the UA
+   `[hidden]{display:none}` rule — so toggling `el.hidden` (or the attribute) did
+   nothing and the Apple button stayed visible despite being gated off. */
+[hidden] { display: none !important; }
 html, body { margin: 0; padding: 0; height: 100%; background: #131722; color: #d1d4dc; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; overflow: hidden; }
 
 /* Themed scrollbars — thin and dark so they blend into the app chrome instead
@@ -65,10 +70,48 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
    row on desktop. Hidden on mobile (the setup strip reclaims that space). */
 #header-brand { flex: 0 0 auto; text-decoration: none; cursor: pointer; }
 #header-brand .logo { width: 30px; height: 30px; filter: drop-shadow(0 1px 4px rgba(38, 166, 154, 0.30)); }
-.setup { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.setup input, .setup select, .setup button { background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39; border-radius: 4px; padding: 4px 8px; }
+.setup { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+/* Controls share one polished treatment: 8px radius, subtle top highlight, and a
+   teal focus ring — matching the deliberate look of the trade bar. */
+.setup input, .setup select, .setup button {
+  background: #1e222d; color: #d1d4dc; border: 1px solid #2a2e39;
+  border-radius: 8px; padding: 6px 10px; font-size: 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.setup select { cursor: pointer; }
+.setup input:hover, .setup select:hover { border-color: #3a4150; }
+.setup input:focus-visible, .setup select:focus-visible {
+  outline: 0; border-color: #26a69a; box-shadow: 0 0 0 2px rgba(38,166,154,0.25);
+}
 .setup button { cursor: pointer; background: #2962ff; border-color: #2962ff; }
 .setup button:hover { background: #1d4ed8; }
+
+/* Symbol · market · tf grouped into one rounded capsule with hairline dividers
+   (a TradingView-style toolbar). overflow stays visible so the symbol popover
+   isn't clipped. */
+.setup-capsule {
+  display: inline-flex; align-items: stretch;
+  background: #1e222d; border: 1px solid #2a2e39; border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+}
+.setup-capsule:focus-within { border-color: #3a4150; }
+.setup-capsule > * + * { border-left: 1px solid #2a2e39; }
+.setup-capsule input, .setup-capsule select {
+  background: transparent; border: 0; border-radius: 0; box-shadow: none;
+}
+.setup-capsule input:focus-visible, .setup-capsule select:focus-visible { outline: 0; box-shadow: none; }
+/* market / tf custom dropdowns (dropdown.js) sit inside the capsule — strip their
+   own box so they read as one seamless control with hairline dividers. */
+.setup-capsule .dd { align-items: stretch; }
+.setup-capsule .dd .dd-trigger {
+  background: transparent; border: 0; border-radius: 0; height: 100%;
+}
+.setup-capsule .dd .dd-trigger:hover { background: rgba(255,255,255,0.03); }
+/* Header Live/Replay toggle: a touch taller than the base mode-pill so it
+   balances the capsule. */
+.mode-toggle { padding: 3px; border-radius: 8px; }
+.mode-toggle button { padding: 5px 13px; font-size: 12.5px; font-weight: 600; }
 #status {
   position: fixed; bottom: 12px; right: 12px;
   font-size: 11px; color: #d1d4dc;
@@ -81,7 +124,7 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
   opacity: 0; transition: opacity 0.15s;
 }
 #status:not(:empty) { opacity: 1; }
-.user-info { margin-left: auto; position: relative; }
+.user-info { margin-left: auto; position: relative; display: flex; align-items: center; }
 .user-avatar {
   width: 30px; height: 30px;
   border-radius: 50%;
@@ -298,10 +341,18 @@ header { display: flex; align-items: center; gap: 12px; padding: 8px 12px; backg
 }
 .dd .dd-row:hover { background: #2a2e39; border-color: #2a2e39; }
 .dd .dd-row.active { color: #26a69a; }
-.live-indicator { font-size: 11px; font-weight: 700; color: #81c784; letter-spacing: 0.5px;
-  display: inline-flex; align-items: center; gap: 4px;
+/* Glossy LIVE pill — static chrome with just the dot pulsing, so the label
+   stays crisp. */
+.live-indicator { font-size: 11px; font-weight: 700; color: #81c784; letter-spacing: 0.6px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  background: rgba(129,199,132,0.12); border: 1px solid rgba(129,199,132,0.35);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); }
+.live-indicator .live-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #81c784;
+  box-shadow: 0 0 6px rgba(129,199,132,0.9);
   animation: live-pulse 1.5s ease-in-out infinite; }
-@keyframes live-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.55 } }
+@keyframes live-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.3 } }
 /* hide replay-only controls in live mode */
 .live-mode .controls { display: none !important; }
 /* The replay date picker only makes sense in Replay mode. Hide it by default
@@ -350,7 +401,10 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
   .setup     { order: 0; flex: 1 1 auto; flex-wrap: nowrap; gap: 4px; min-width: 0; }
   .user-info { order: 1; flex: 0 0 auto; width: auto; margin-left: auto; padding-top: 0; border-top: 0; align-self: center; }
   .setup > * { flex: 0 1 auto; min-width: 0; }
-  .setup > .symbol-picker > input { min-width: 0; }
+  .setup .symbol-picker > input { min-width: 0; }
+  /* The symbol·market·tf capsule must be allowed to shrink on the single strip. */
+  .setup-capsule { min-width: 0; flex: 1 1 auto; }
+  .setup-capsule .symbol-picker { min-width: 0; }
   .setup .live-indicator { display: none; }
   #status    { display: none !important; }   /* no bottom-right toast on phones */
   .setup select, .setup input, .setup button { font-size: 11px; padding: 5px 4px; min-height: 34px; }
@@ -429,6 +483,8 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
      instead of being stretched into ovals by the min-height alone. */
   button, .pick, .tool { min-height: 36px; }
   .user-avatar { width: 36px; height: 36px; font-size: 14px; }
+  /* Match the install circle to the 36px avatar so they line up in the header. */
+  .install-btn { width: 36px; height: 36px; margin-right: 6px; }
   .symbol-row .symbol-add, .symbol-row .symbol-del { width: 36px; height: 36px; }
   /* Tools/Indicators launchers: the 36px min-height above would stretch them
      into tall rectangles — pin equal width+height so they stay square. The
@@ -617,10 +673,22 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
 
 /* The chart fills the stack; RSI/CVD render as native sub-panes INSIDE this one
    chart (see app.js relayoutSubPanes), so there are no separate sub-pane divs. */
-.chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.chart-stack { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: #000; }
 #chart { flex: 1; min-height: 0; }
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
 #chart.hline-hover, #chart.hline-hover canvas { cursor: row-resize !important; }
+/* Candle-close countdown — small glassy pill at the bottom-right, clear of the
+   right price axis and the time-axis row. */
+.candle-countdown {
+  position: absolute; right: 62px; bottom: 24px; z-index: 6;
+  padding: 3px 9px; border-radius: 7px;
+  background: rgba(10, 13, 18, 0.72); border: 1px solid #2a2e39;
+  color: #d1d4dc; font-size: 12px; font-weight: 600;
+  font-variant-numeric: tabular-nums; letter-spacing: 0.4px;
+  pointer-events: none; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+.candle-countdown[hidden] { display: none; }
 /* drawer resize handle: mobile-only (shown in the media query); hidden on
    desktop where the side-pane is a fixed left column. */
 .drawer-resize { display: none; }
@@ -646,7 +714,11 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
 .mode-pill button { display: inline-flex; align-items: center; background: transparent; color: #8a93a3; border: 0; border-radius: 4px; padding: 4px 9px; font: inherit; font-size: 12px; cursor: pointer; line-height: 1.4; }
 .mode-pill button svg { display: block; }
 .mode-pill button:hover { color: #d1d4dc; }
-.mode-pill button.active { background: #26a69a; color: #0f1218; font-weight: 600; }
+.mode-pill button.active {
+  background: linear-gradient(180deg, #2fb9ab 0%, #26a69a 55%, #1f8a80 100%);
+  color: #04201c; font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.35), 0 1px 2px rgba(0,0,0,0.4);
+}
 
 /* Replay transport icon buttons (Previous / Play-Pause / Next) */
 .controls-center .icon-btn { display: inline-flex; align-items: center; justify-content: center; padding: 5px; min-width: 44px; }
@@ -706,6 +778,10 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
 
 .pick { background: #2a2e39; border: 1px solid #444; color: #ffb74d; border-radius: 4px; padding: 2px 6px; font-size: 11px; cursor: pointer; line-height: 1; flex-shrink: 0; }
 .pick:hover { background: #3a3e49; }
+/* SL/TP toggled off: the % field dims via .row input:disabled (above); gray its
+   🎯 picker too so the whole group reads as inactive. */
+.pick:disabled { opacity: 0.4; cursor: not-allowed; }
+.pick:disabled:hover { background: #2a2e39; }
 .pick.armed { background: #ffb74d; color: #1e222d; border-color: #ffb74d; }
 
 .tape-controls { font-size: 12px; color: #aaa; margin-bottom: 4px; display: flex; gap: 8px; align-items: center; }
@@ -839,6 +915,8 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
     text-align: center; font-variant-numeric: tabular-nums;
   }
   .mtb-pct-suffix { color: #ffffff; font-size: 12px; font-weight: 700; }
+  /* chip un-pressed → gray the matching % box so it reads as inactive */
+  .mtb-pct-wrap.is-off { opacity: 0.4; }
   .mtb-chip {
     flex: 0 0 auto; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
     color: #8a93a3; background: #161a22; border: 1px solid #2a2e39;

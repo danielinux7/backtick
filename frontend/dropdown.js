@@ -97,7 +97,9 @@
   }
 
   function init() {
-    ["#mode-select", 'select[name="market"]', "#tf-select", "#speed"].forEach((q) => {
+    // #mode-select is intentionally excluded — it's driven by the segmented
+    // Live/Replay toggle in the header and kept hidden as the form value.
+    ['select[name="market"]', "#tf-select", "#speed"].forEach((q) => {
       enhanceSelect(document.querySelector(q));
     });
   }

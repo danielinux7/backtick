@@ -13,9 +13,8 @@ test('load SOLUSDT, step, place a long, see it in the trades table', async ({ pa
   // and the replay date is pre-filled (~60 days back). Selecting Replay mode
   // triggers a single auto-load. (Do NOT also click Load — a second load races
   // with the trade and resetForNewSession would wipe the trades table.)
-  // Mode is a custom dropdown (the native <select> is hidden); open it and pick Replay.
-  await page.locator('.dd:has(#mode-select) .dd-trigger').click();
-  await page.locator('.dd:has(#mode-select) .dd-row', { hasText: 'Replay' }).click();
+  // Mode is a segmented Live/Replay toggle (it drives the hidden #mode-select).
+  await page.locator('#mode-toggle button[data-mode="replay"]').click();
 
   // Controls stay disabled until a session is loaded — wait for that signal.
   await expect(longBtn).toBeEnabled({ timeout: 30_000 });
