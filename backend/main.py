@@ -891,19 +891,24 @@ async def reconcile_klines(
         if not len(sess.df):
             return {"updated": 0, "appended": 0}
         df = sess.df
-        idx_of = {int(t): i for i, t in enumerate(df["time"].values)}
-        last_time = int(df["time"].iloc[-1])
+        # Map open-time -> POSITIONAL index; we read/write by position (.iloc),
+        # never assuming label == position (the df index need not be a clean
+        # RangeIndex after slicing / history extension).
+        pos_of = {int(t): i for i, t in enumerate(df["time"].values)}
+        col_pos = [df.columns.get_loc(c) for c in ("open", "high", "low", "close", "volume")]
         cols = ["open", "high", "low", "close", "volume"]
+        last_time = int(df["time"].iloc[-1])
         updated = 0
         appends = []
         for k in req.klines:
             t = int(k.time)
             vals = [float(k.open), float(k.high), float(k.low), float(k.close), float(k.volume)]
-            if t in idx_of:                                  # overwrite an existing row
-                i = idx_of[t]
+            if t in pos_of:                                  # overwrite an existing row
+                i = pos_of[t]
                 cur = df.iloc[i]
                 if any(abs(float(cur[c]) - v) > 5e-9 for c, v in zip(cols, vals)):
-                    df.loc[i, cols] = vals
+                    for cp, v in zip(col_pos, vals):
+                        df.iloc[i, cp] = v
                     sess.cvd_cache.pop(t, None)
                     updated += 1
             elif t > last_time:                              # contiguous tail extension
