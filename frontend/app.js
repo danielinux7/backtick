@@ -1270,6 +1270,7 @@
         close: prices[prices.length - 1],
       });
     }
+    updateCountdown();   // refresh time-to-close as ticks reveal the forming candle
     renderTape();
   };
 
@@ -1456,15 +1457,26 @@
   const updateCountdown = () => {
     if (!countdownEl) return;
     const tfSec = session && TF_SECONDS[session.tf];
-    const show = session && tfSec && (session.is_live || session.in_tick);
-    if (!show) { countdownEl.hidden = true; return; }
-    // `now` is the wall clock in live, the simulated clock in tick replay.
-    const now = session.is_live ? (Date.now() / 1000) : (session.current_time || 0);
-    if (!now) { countdownEl.hidden = true; return; }
-    // The forming candle's open is the tf-aligned floor of `now`; it closes one
-    // timeframe later. (Binance kline opens are aligned to the same boundaries.)
-    const closeTs = (Math.floor(now / tfSec) + 1) * tfSec;
-    countdownEl.textContent = fmtCountdown(closeTs - now);
+    if (!session || !tfSec) { countdownEl.hidden = true; return; }
+    let remaining;
+    if (session.is_live) {
+      // Real clock: the forming candle's open is the tf-aligned floor of now; it
+      // closes one timeframe later. (Binance kline opens align to the same grid.)
+      const now = Date.now() / 1000;
+      remaining = ((Math.floor(now / tfSec) + 1) * tfSec) - now;
+    } else if (session.in_tick && revealedForming.candleOpenSec != null && revealedForming.ticks.length) {
+      // Tick replay: there's no wall clock — drive it from the last revealed tick
+      // of the candle the chart is actually drawing. `current_time` can't be used
+      // here: it's the previous (fully-revealed) candle's open and never advances
+      // mid-candle, so the countdown would freeze at the full timeframe.
+      const lastTickSec = revealedForming.ticks[revealedForming.ticks.length - 1].time_ms / 1000;
+      remaining = (revealedForming.candleOpenSec + tfSec) - lastTickSec;
+    } else {
+      // Candle replay / idle / no forming ticks — no meaningful countdown.
+      countdownEl.hidden = true;
+      return;
+    }
+    countdownEl.textContent = fmtCountdown(remaining);
     countdownEl.hidden = false;
   };
   setInterval(updateCountdown, 1000);   // drives the live tick; cheap when hidden
@@ -1781,26 +1793,45 @@
       const apiBase = sess.market === "futures" ? "https://fapi.binance.com" : "https://api.binance.com";
       const path = sess.market === "futures" ? "/fapi/v1/klines" : "/api/v3/klines";
       liveSeedAbort = new AbortController();
-      const r = await fetch(`${apiBase}${path}?symbol=${encodeURIComponent(sess.symbol)}&interval=${sess.tf}&limit=1`,
+      // Pull a few recent bars, not just the forming one: the backend warmup seed
+      // can end a candle (or more) behind the live edge — stale cache, a candle
+      // closing during the WS handshake, or a Binance rate-limit. Without the
+      // in-between CLOSED bars the chart shows two non-consecutive bars side by
+      // side (reads as "a candle is missing / a gap before the last candle").
+      const r = await fetch(`${apiBase}${path}?symbol=${encodeURIComponent(sess.symbol)}&interval=${sess.tf}&limit=3`,
         { signal: liveSeedAbort.signal });
       if (!r.ok) return;
       const arr = await r.json();
-      const k = Array.isArray(arr) && arr[arr.length - 1];
-      if (!k) return;
+      if (!Array.isArray(arr) || !arr.length) return;
       if (!session || !session.is_live || session.id !== sess.id) return;   // session changed meanwhile
-      const candle = {
-        time: Math.floor(k[0] / 1000),
-        open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
-      };
-      // never feed a bar older than what's already plotted (LWC would throw)
-      const candles = session.candles || [];
-      const lastT = candles.length ? candles[candles.length - 1].time : 0;
-      if (candle.time < lastT) return;
-      candleSeries.update(candle);
-      liveForming = candle;
-      session.current_price = candle.close;
-      $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
-      updateBarPrice(candle.close);
+      const tfSec = TF_SECONDS[sess.tf];
+      const nowSec = Date.now() / 1000;
+      const candles = session.candles || (session.candles = []);
+      // Walk ascending; LWC throws on a bar older than what's plotted, so only
+      // feed bars newer than the current tail. Backfill the missing CLOSED bars,
+      // then seed the still-forming one.
+      for (const k of arr) {
+        const candle = {
+          time: Math.floor(k[0] / 1000),
+          open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5],
+        };
+        const lastT = candles.length ? candles[candles.length - 1].time : 0;
+        if (candle.time < lastT) continue;
+        const closed = candle.time + tfSec <= nowSec;
+        candleSeries.update(candle);
+        if (closed) {
+          // promote into session.candles so indicators/tape stay contiguous
+          if (candle.time > lastT) candles.push(candle);
+          else if (candle.time === lastT) candles[candles.length - 1] = candle;
+          liveLastKlineTime = candle.time;
+          liveForming = null;
+        } else {
+          liveForming = candle;
+        }
+        session.current_price = candle.close;
+        $("#mark-info").textContent = `Mark: ${candle.close.toFixed(4)}`;
+        updateBarPrice(candle.close);
+      }
     } catch (_) { /* non-fatal */ }
   };
 

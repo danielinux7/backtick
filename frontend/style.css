@@ -677,18 +677,19 @@ main { display: grid; grid-template-columns: 1fr var(--side-w, 320px); height: c
 #chart { flex: 1; min-height: 0; }
 #chart.armed { outline: 2px dashed #ffb74d; outline-offset: -2px; }
 #chart.hline-hover, #chart.hline-hover canvas { cursor: row-resize !important; }
-/* Candle-close countdown — small glassy pill at the bottom-right, clear of the
-   right price axis and the time-axis row. */
+/* Candle-close countdown — tucked into the bottom-right corner where the price
+   axis (right) and time axis (bottom) meet, styled like axis chrome (no pill). */
 .candle-countdown {
-  position: absolute; right: 62px; bottom: 24px; z-index: 6;
-  padding: 3px 9px; border-radius: 7px;
-  background: rgba(10, 13, 18, 0.72); border: 1px solid #2a2e39;
-  color: #d1d4dc; font-size: 12px; font-weight: 600;
-  font-variant-numeric: tabular-nums; letter-spacing: 0.4px;
-  pointer-events: none; box-shadow: 0 1px 5px rgba(0, 0, 0, 0.5);
-  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+  position: absolute; right: 4px; bottom: 2px; z-index: 6;
+  color: #9aa0aa; font-size: 12px; font-weight: 500;
+  font-variant-numeric: tabular-nums; text-align: right;
+  pointer-events: none;
 }
 .candle-countdown[hidden] { display: none; }
+/* Match the chart's mobile axis font (app.js sets layout.fontSize: 9 ≤900px). */
+@media (max-width: 900px) {
+  .candle-countdown { font-size: 9px; right: 3px; }
+}
 /* drawer resize handle: mobile-only (shown in the media query); hidden on
    desktop where the side-pane is a fixed left column. */
 .drawer-resize { display: none; }
