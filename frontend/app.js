@@ -1835,6 +1835,58 @@
     } catch (_) { /* non-fatal */ }
   };
 
+  // Heal client-built live candles that drifted from Binance. The WS feed can
+  // drop frames while the tab is suspended, so a closed candle gets persisted
+  // with an incomplete high/low/close (open is always right — it's the first
+  // frame). Re-fetch a window of authoritative klines and overwrite any that
+  // differ, both on the chart and in the backend df. LWC's update() can't
+  // rewrite a past bar, so a correction triggers a single setData repaint.
+  const reconcileLiveCandles = async (sess) => {
+    try {
+      const apiBase = sess.market === "futures" ? "https://fapi.binance.com" : "https://api.binance.com";
+      const path = sess.market === "futures" ? "/fapi/v1/klines" : "/api/v3/klines";
+      const r = await fetch(`${apiBase}${path}?symbol=${encodeURIComponent(sess.symbol)}&interval=${sess.tf}&limit=500`);
+      if (!r.ok) return;
+      const arr = await r.json();
+      if (!Array.isArray(arr) || !arr.length) return;
+      if (!session || !session.is_live || session.id !== sess.id) return;   // changed meanwhile
+      const tfSec = TF_SECONDS[sess.tf];
+      const nowSec = Date.now() / 1000;
+      const candles = session.candles || (session.candles = []);
+      const byTime = new Map(candles.map((c) => [c.time, c]));
+      const firstT = candles.length ? candles[0].time : 0;
+      const lastT = candles.length ? candles[candles.length - 1].time : 0;
+      const eq = (x, y) => Math.abs(x - y) <= 5e-3;
+      const corrections = [];
+      for (const k of arr) {
+        const t = Math.floor(k[0] / 1000);
+        if (t + tfSec > nowSec) continue;          // skip the still-forming candle
+        if (t < firstT) continue;                  // don't extend history backward
+        const a = { time: t, open: +k[1], high: +k[2], low: +k[3], close: +k[4], volume: +k[5] };
+        const cur = byTime.get(t);
+        if (cur && eq(cur.open, a.open) && eq(cur.high, a.high) && eq(cur.low, a.low) && eq(cur.close, a.close))
+          continue;                                // already matches — nothing to fix
+        if (cur) Object.assign(cur, a);
+        else if (t > lastT) { candles.push(a); byTime.set(t, a); }
+        else continue;                             // gap inside history we can't place — leave it
+        corrections.push(a);
+      }
+      if (!corrections.length) return;
+      candles.sort((x, y) => x.time - y.time);
+      // Repaint closed candles + keep the live forming bar on top, then restore
+      // markers/indicators (setData clears series markers).
+      const data = candles.slice();
+      if (liveForming && (!data.length || liveForming.time > data[data.length - 1].time)) data.push(liveForming);
+      candleSeries.setData(data);
+      renderIndicators();
+      renderTrades();
+      await api(`/api/session/${session.id}/reconcile_klines`, {
+        method: "POST", body: JSON.stringify({ klines: corrections }),
+      });
+      refreshActiveIndicators();
+    } catch (_) { /* non-fatal */ }
+  };
+
   const connectLiveStream = (sess) => {
     closeLiveStream();
     const base = sess.market === "futures"
@@ -1844,7 +1896,8 @@
     const url = `${base}/stream?streams=${sym}@kline_${sess.tf}/${sym}@aggTrade`;
     liveWs = new WebSocket(url);
     startLivePush();
-    seedFormingCandle(sess);   // fill the forming candle now; don't wait for first WS frame
+    seedFormingCandle(sess);     // fill the forming candle now; don't wait for first WS frame
+    reconcileLiveCandles(sess);  // heal any closed candles that drifted while away
     liveWs.onmessage = (ev) => {
       let m;
       try { m = JSON.parse(ev.data); } catch (_) { return; }
@@ -1861,6 +1914,13 @@
     };
     liveWs.onerror = () => setStatus("live stream error", true);
   };
+
+  // A suspended tab is the main source of live-candle drift (the WS stalls and
+  // loses frames). When the tab comes back, reconcile against authoritative
+  // klines so the chart re-matches Binance.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && session && session.is_live) reconcileLiveCandles(session);
+  });
 
   // ---- Actions
   const loadSession = async (opts = {}) => {

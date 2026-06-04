@@ -807,6 +807,14 @@ class PushKlineReq(BaseModel):
     volume: float
 
 
+class ReconcileKlinesReq(BaseModel):
+    # authoritative CLOSED klines (from the client's Binance REST fetch) used to
+    # correct client-built live candles that drifted while the tab was suspended
+    # / the WS dropped frames. Existing rows are overwritten by open time;
+    # contiguous newer ones are appended.
+    klines: list[PushKlineReq]
+
+
 @app.post("/api/session/{sid}/push_ticks")
 async def push_ticks(
     sid: str, req: PushTicksReq,
@@ -866,6 +874,47 @@ async def push_kline(
         sess.cvd_cache.pop(int(req.time), None)
     await save_snapshot(db, sess)
     return {"appended": True, "cursor": sess.cursor}
+
+
+@app.post("/api/session/{sid}/reconcile_klines")
+async def reconcile_klines(
+    sid: str, req: ReconcileKlinesReq,
+    user: User = Depends(current_user), db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Overwrite drifted live candles with authoritative OHLC. Live-only: the
+    client builds candles from the WS feed, which can lose frames while the tab
+    is suspended; this heals the stored df from a fresh Binance kline fetch."""
+    sess = await _resolve(db, sid, user.id)
+    if not sess.is_live or not req.klines:
+        return {"updated": 0, "appended": 0}
+    with sess.lock:
+        if not len(sess.df):
+            return {"updated": 0, "appended": 0}
+        df = sess.df
+        idx_of = {int(t): i for i, t in enumerate(df["time"].values)}
+        last_time = int(df["time"].iloc[-1])
+        cols = ["open", "high", "low", "close", "volume"]
+        updated = 0
+        appends = []
+        for k in req.klines:
+            t = int(k.time)
+            vals = [float(k.open), float(k.high), float(k.low), float(k.close), float(k.volume)]
+            if t in idx_of:                                  # overwrite an existing row
+                i = idx_of[t]
+                cur = df.iloc[i]
+                if any(abs(float(cur[c]) - v) > 5e-9 for c, v in zip(cols, vals)):
+                    df.loc[i, cols] = vals
+                    sess.cvd_cache.pop(t, None)
+                    updated += 1
+            elif t > last_time:                              # contiguous tail extension
+                appends.append({"time": t, **dict(zip(cols, vals))})
+        if appends:
+            appends.sort(key=lambda r: r["time"])
+            sess.df = pd.concat([df, pd.DataFrame(appends)], ignore_index=True)
+            sess.cursor = len(sess.df) - 1
+    if updated or appends:
+        await save_snapshot(db, sess)
+    return {"updated": updated, "appended": len(appends)}
 
 
 @app.delete("/api/session/{sid}")
