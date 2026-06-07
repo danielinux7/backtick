@@ -42,7 +42,9 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=os.environ.get("SESSION_SECRET", "dev-only-not-secret-change-me"),
     same_site="lax",
-    https_only=os.environ.get("RENDER", "").lower() in {"1", "true"},
+    # Provider-neutral Secure-cookie gate (was a Render-only RENDER env check) so
+    # this stays correct after a host move — see auth.is_production.
+    https_only=is_production(),
 )
 
 

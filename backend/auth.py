@@ -112,7 +112,16 @@ def _cookie_kwargs(secure: bool) -> dict:
 
 
 def is_production() -> bool:
-    return os.environ.get("RENDER", "").lower() in {"1", "true"} or os.environ.get("ENV", "") == "production"
+    """True when the app is served over HTTPS in production, so cookies get the
+    Secure flag. Provider-neutral: set `ENV=production` (or `HTTPS_ONLY=true`) on
+    any host. `RENDER` is kept as a legacy alias since Render sets it automatically
+    — on other providers (Hetzner/Oracle/Fly/…) use ENV/HTTPS_ONLY instead."""
+    env = os.environ
+    return (
+        env.get("ENV", "").lower() == "production"
+        or env.get("HTTPS_ONLY", "").lower() in {"1", "true"}
+        or env.get("RENDER", "").lower() in {"1", "true"}
+    )
 
 
 async def create_guest(db: AsyncSession) -> tuple[User, str]:
