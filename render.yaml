@@ -2,19 +2,35 @@ services:
   - type: web
     name: backtick
     runtime: python
-    plan: free
+    # A persistent disk (below) requires a paid instance — free instances get an
+    # ephemeral filesystem that's wiped on every deploy/restart, which would lose
+    # the SQLite DB. starter is the minimum; bump this if the service is on a
+    # higher tier so a blueprint sync doesn't downgrade it.
+    plan: starter
     region: frankfurt
     buildCommand: pip install -r requirements.txt && python scripts/bump_sw_version.py
     startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /healthz
     autoDeploy: true
+    # Persistent disk holds the SQLite DB + the Binance parquet cache so both
+    # survive deploys/restarts. Attaching a disk pins the service to a single
+    # instance with stop-then-start deploys — fine here (SessionStore is already
+    # single-instance). DATABASE_URL / DATA_CACHE_DIR must point under mountPath.
+    disk:
+      name: backtick-data
+      mountPath: /var/data
+      sizeGB: 2
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
+      # Set in the Render dashboard (kept here as sync:false so a blueprint sync
+      # doesn't clobber them). Expected values, both under the disk mountPath:
+      #   DATABASE_URL=sqlite+aiosqlite:////var/data/backtick.db   (4 slashes = absolute)
+      #   DATA_CACHE_DIR=/var/data/data_cache
       - key: DATABASE_URL
-        fromDatabase:
-          name: backtick-db
-          property: connectionString
+        sync: false
+      - key: DATA_CACHE_DIR
+        sync: false
       - key: SESSION_SECRET
         generateValue: true
       - key: GOOGLE_CLIENT_ID
@@ -33,9 +49,7 @@ services:
       - key: APPLE_PRIVATE_KEY      # full .p8 PEM contents (-----BEGIN PRIVATE KEY----- …)
         sync: false
 
-databases:
-  - name: backtick-db
-    plan: free
-    region: frankfurt
-    databaseName: backtick
-    user: backtick
+# Managed Postgres removed — the app now uses SQLite on the persistent disk
+# above (single-instance, low concurrency). To migrate existing prod data, dump
+# the old Postgres and load it into /var/data/backtick.db before the first boot;
+# otherwise the schema is created fresh on startup (create_all).
