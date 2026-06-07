@@ -1645,6 +1645,7 @@
   let livePushTimer = null;
   let liveLastKlineTime = null;       // open time (s) of most recently CLOSED kline we've pushed
   let liveForming = null;             // forming candle {time,open,high,low,close,volume}; ticks refine it between kline frames
+  let reconcileInFlight = false;      // guard so overlapping triggers don't double-fetch/repaint
 
   const stopLivePush = () => {
     if (livePushTimer) clearInterval(livePushTimer);
@@ -1720,6 +1721,16 @@
       close: parseFloat(k.c),
       volume: parseFloat(k.v),
     };
+    // Detect a skipped bucket: if this candle opens more than one timeframe past
+    // the last bar we plotted, the WS stalled and dropped a whole candle's
+    // frames. Plotting it now would leave a permanent gap (LWC bars are ordinal,
+    // so the missing bucket reads as a hole) that only healed on reconnect /
+    // tab-refocus before. Backfill the missing closed bar(s) from authoritative
+    // klines after this update lands.
+    const tfSec = TF_SECONDS[session.tf];
+    const prevBarTime = liveForming ? liveForming.time : liveLastKlineTime;
+    const gapped = prevBarTime != null && candle.time > prevBarTime + tfSec;
+
     candleSeries.update(candle);
     // Track the forming candle so aggTrade ticks can refine it between kline
     // frames (below). Once it closes, drop it — the next kline frame seeds the
@@ -1735,6 +1746,13 @@
     // their per-candle aggregations
     if (k.x === true && candle.time !== liveLastKlineTime) {
       liveLastKlineTime = candle.time;
+      // Keep session.candles contiguous as the live session runs so indicators
+      // (EMA/RSI/CVD, computed from session.candles) and reconcile's diff stay
+      // accurate — the WS path used to only refresh the chart series.
+      const cs = session.candles || (session.candles = []);
+      const lastT = cs.length ? cs[cs.length - 1].time : 0;
+      if (candle.time > lastT) cs.push({ ...candle });
+      else if (candle.time === lastT) cs[cs.length - 1] = { ...candle };
       // flush any pending ticks first so the new candle's data is buffered
       // before the backend processes the close
       await pushLiveTicks();
@@ -1745,6 +1763,7 @@
         refreshActiveIndicators();
       } catch (_) { /* non-fatal */ }
     }
+    if (gapped) reconcileLiveCandles(session);
   };
 
   const handleLiveAggTrade = (a) => {
@@ -1842,6 +1861,8 @@
   // differ, both on the chart and in the backend df. LWC's update() can't
   // rewrite a past bar, so a correction triggers a single setData repaint.
   const reconcileLiveCandles = async (sess) => {
+    if (reconcileInFlight) return;     // connect / refocus / gap can all fire — one at a time
+    reconcileInFlight = true;
     try {
       const apiBase = sess.market === "futures" ? "https://fapi.binance.com" : "https://api.binance.com";
       const path = sess.market === "futures" ? "/fapi/v1/klines" : "/api/v3/klines";
@@ -1884,7 +1905,9 @@
         method: "POST", body: JSON.stringify({ klines: corrections }),
       });
       refreshActiveIndicators();
-    } catch (_) { /* non-fatal */ }
+    } catch (_) { /* non-fatal */ } finally {
+      reconcileInFlight = false;
+    }
   };
 
   const connectLiveStream = (sess) => {
