@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import os
 
+from . import offsite_backup
 from .db import DATABASE_URL
 from scripts.backup_db import run_backup
 
@@ -42,7 +43,15 @@ async def _loop(interval_sec: float, keep: int, startup_delay: float) -> None:
     while True:
         try:
             # sqlite3's online backup is blocking — keep it off the event loop.
-            await asyncio.to_thread(run_backup, DATABASE_URL, keep, None)
+            dest = await asyncio.to_thread(run_backup, DATABASE_URL, keep, None)
+            if dest is not None and offsite_backup.is_configured():
+                # Off-site copy is best-effort: the local snapshot already
+                # succeeded, so an R2 hiccup must not fail the round.
+                try:
+                    ok = await asyncio.to_thread(offsite_backup.upload_file, dest)
+                    print(f"[backup_db] off-site upload {'ok' if ok else 'skipped'}: {dest.name}")
+                except Exception as exc:
+                    print(f"[backup_db] off-site upload failed: {exc!r}")
         except Exception as exc:  # a backup failure must never kill the loop
             print(f"[backup_db] scheduled backup failed: {exc!r}")
         await asyncio.sleep(interval_sec)
