@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.sessions import SessionMiddleware
 
+from . import backup_scheduler
 from .aggtrades import fetch_agg_trades, fetch_rest_recent
 from .auth import _cookie_kwargs, create_guest, current_user, current_user_optional, is_production
 from .binance import TF_MS, VALID_TFS, RateLimitedError, fetch_klines
@@ -76,14 +77,26 @@ def _ensure_schema(conn) -> None:
                               "ON replay_snapshots (user_id, market, is_live)"))
 
 
+_backup_task = None
+
+
 @app.on_event("startup")
 async def _startup() -> None:
     """Auto-create tables on cold start, then patch in any newly-added columns.
     create_all() is idempotent; _ensure_schema handles additive migrations since
-    there's no Alembic step."""
+    there's no Alembic step. Also start the periodic SQLite backup (no-op on
+    Postgres / when disabled)."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_schema)
+    global _backup_task
+    _backup_task = backup_scheduler.start()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    if _backup_task is not None:
+        _backup_task.cancel()
 
 
 app.include_router(auth_router)

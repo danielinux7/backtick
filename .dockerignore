@@ -1,0 +1,16 @@
+.git
+.gitignore
+node_modules
+**/__pycache__
+*.pyc
+.pytest_cache
+.playwright-mcp
+test-results
+tests/e2e
+.claude
+.venv
+# Never bake local data into the image — the volume provides it at runtime.
+*.db
+*.db-wal
+*.db-shm
+data_cache
