@@ -24,9 +24,13 @@ services:
       - key: PYTHON_VERSION
         value: "3.11"
       # Set in the Render dashboard (kept here as sync:false so a blueprint sync
-      # doesn't clobber them). Expected values, both under the disk mountPath:
-      #   DATABASE_URL=sqlite+aiosqlite:////var/data/backtick.db   (4 slashes = absolute)
-      #   DATA_CACHE_DIR=/var/data/data_cache
+      # doesn't clobber them) — or pushed from secrets.local.json via
+      # scripts/sync_render_env.py. Expected values:
+      #   ENV=production                                           (Secure-cookie gate — auth.is_production)
+      #   DATABASE_URL=sqlite+aiosqlite:////var/data/backtick.db   (4 slashes = absolute; under the disk mount)
+      #   DATA_CACHE_DIR=/var/data/data_cache                      (under the disk mount)
+      - key: ENV
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: DATA_CACHE_DIR
