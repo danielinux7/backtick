@@ -29,6 +29,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from typing import Any
 
 API_ROOT = "https://api.render.com/v1"
 
@@ -57,7 +58,7 @@ def _mask(val: str) -> str:
     return s if len(s) <= 6 else f"{s[:3]}…{s[-2:]} ({len(s)} chars)"
 
 
-def _api(method: str, path: str, api_key: str, body: dict | None = None) -> object:
+def _api(method: str, path: str, api_key: str, body: dict | None = None) -> Any:
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(f"{API_ROOT}{path}", data=data, method=method)
     req.add_header("Authorization", f"Bearer {api_key}")
@@ -67,6 +68,39 @@ def _api(method: str, path: str, api_key: str, body: dict | None = None) -> obje
     with urllib.request.urlopen(req) as resp:
         raw = resp.read()
         return json.loads(raw) if raw else None
+
+
+def _changed(desired: dict, current: dict) -> tuple[dict, list[str]]:
+    """Split `desired` into (changed, unchanged_keys) vs what's already on the host.
+    Pure + unit-tested. Lets the sync skip a no-op write — which on Render means
+    not triggering a redundant env-change deploy when nothing actually moved."""
+    changed, unchanged = {}, []
+    for key, val in desired.items():
+        if current.get(key) == str(val):
+            unchanged.append(key)
+        else:
+            changed[key] = val
+    return changed, unchanged
+
+
+def _fetch_current_env(service_id: str, api_key: str) -> dict:
+    """Current {key: value} for the service, paginated. Render returns the value
+    for keys it can read; unreadable ones come back as None → treated as changed."""
+    out: dict = {}
+    cursor = None
+    while True:
+        q = urllib.parse.urlencode({"limit": 100, **({"cursor": cursor} if cursor else {})})
+        page = _api("GET", f"/services/{service_id}/env-vars?{q}", api_key)
+        if not page:
+            break
+        for item in page:
+            ev = item.get("envVar") or {}
+            if "key" in ev:
+                out[ev["key"]] = ev.get("value")
+            cursor = item.get("cursor")
+        if len(page) < 100:
+            break
+    return out
 
 
 def _resolve_service_id(meta: dict, api_key: str) -> str:
@@ -85,6 +119,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--file", default="secrets.local.json", help="secrets file (default: secrets.local.json)")
     ap.add_argument("--dry-run", action="store_true", help="print what would change; make no API calls")
+    ap.add_argument("--force", action="store_true", help="push every value, even ones already matching on the host")
     args = ap.parse_args()
 
     if not os.path.exists(args.file):
@@ -113,7 +148,19 @@ def main() -> int:
     service_id = _resolve_service_id(meta, api_key)
     print(f"[sync] target service: {service_id}")
 
-    for key, val in env.items():
+    to_push = env
+    if not args.force:
+        # Only write what actually differs — a no-op write would still trigger a
+        # Render env-change deploy, which we don't want on a routine code deploy.
+        current = _fetch_current_env(service_id, api_key)
+        to_push, unchanged = _changed(env, current)
+        if unchanged:
+            print(f"[sync] already current: {', '.join(unchanged)}")
+        if not to_push:
+            print("[sync] nothing changed — no env writes, no extra deploy.")
+            return 0
+
+    for key, val in to_push.items():
         try:
             _api("PUT", f"/services/{service_id}/env-vars/{key}", api_key, {"value": str(val)})
             print(f"    ✓ {key}")
