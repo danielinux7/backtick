@@ -1454,6 +1454,16 @@
     if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
     return `${pad(m)}:${pad(s)}`;
   };
+  // Size the countdown box to the blank corner cell where the price axis (right)
+  // and time axis (bottom) meet, so flex-centering lands it dead-center of both.
+  // The price-scale width grows/shrinks with label digits, so re-measure on show.
+  const positionCountdown = () => {
+    if (!countdownEl) return;
+    try {
+      countdownEl.style.width = `${chart.priceScale("right").width()}px`;
+      countdownEl.style.height = `${chart.timeScale().height()}px`;
+    } catch (_) { /* scales not ready yet */ }
+  };
   const updateCountdown = () => {
     if (!countdownEl) return;
     const tfSec = session && TF_SECONDS[session.tf];
@@ -1478,6 +1488,7 @@
     }
     countdownEl.textContent = fmtCountdown(remaining);
     countdownEl.hidden = false;
+    positionCountdown();
   };
   setInterval(updateCountdown, 1000);   // drives the live tick; cheap when hidden
 
@@ -2519,6 +2530,21 @@
     b.title = playing ? "Pause (Space)" : "Play (Space)";
   };
 
+  // Candle autoplay: a self-correcting setTimeout loop, not setInterval. /step is
+  // async (a backend round-trip), so a fixed interval lets slow steps overlap and
+  // the cadence drift — the visible jerkiness. Here each step waits the *leftover*
+  // of the target interval after it lands, so paints stay evenly spaced: the
+  // SPEED_OPTS value is the ms between candles, giving exactly 1 candle/sec at 1x
+  // (1000ms) and Nx = N candles/sec.
+  let playCancel = false;
+  const candleStep = async () => {
+    const interval = parseInt($("#speed").value, 10) || 1000;
+    const start = performance.now();
+    await stepN(1);
+    if (playCancel || !session) return;                 // stopped during the await
+    if (session.cursor >= session.total - 1) { stopPlay(); return; }
+    playTimer = setTimeout(candleStep, Math.max(0, interval - (performance.now() - start)));
+  };
   const startPlay = () => {
     if (playTimer || tickRAF || !session) return;
     if (session.cursor >= session.total - 1 && !session.in_tick) return;
@@ -2526,12 +2552,13 @@
     if (isTickSpeed()) {
       tickStartPlay(tickSpeedFor());
     } else {
-      const speed = parseInt($("#speed").value, 10);
-      playTimer = setInterval(() => stepN(1), speed);
+      playCancel = false;
+      playTimer = setTimeout(candleStep, parseInt($("#speed").value, 10) || 1000);
     }
   };
   const stopPlay = () => {
-    if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    playCancel = true;
+    if (playTimer) { clearTimeout(playTimer); playTimer = null; }
     tickStopPlay();
     setPlayIcon(false);
   };
