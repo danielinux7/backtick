@@ -1,0 +1,36 @@
+#!/bin/sh
+# Auto-sync env/secrets to Render as part of `git push` to main, so the live env
+# never drifts from a deploy and you never run the sync by hand. Hook-only model:
+#   deploy == git push origin main
+# The push to main fires this; it syncs only changed env values, then the push
+# proceeds and Render auto-deploys. Bypass with: git push --no-verify
+#
+# Activate once per clone:  git config core.hooksPath .githooks
+#
+# git feeds the pushed refs on stdin: <local ref> <local sha> <remote ref> <remote sha>
+set -e
+
+root="$(git rev-parse --show-toplevel)"
+secrets="$root/secrets.local.json"
+
+# Only act when main is among the refs being pushed (dev-branch pushes do nothing).
+pushing_main=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main) pushing_main=1 ;;
+  esac
+done
+
+[ "$pushing_main" -eq 1 ] || exit 0
+
+# No secrets on this machine → never block the push; just skip the sync.
+if [ ! -f "$secrets" ]; then
+  echo "[pre-push] no secrets.local.json — skipping env sync."
+  exit 0
+fi
+
+echo "[pre-push] syncing env to Render before deploy…"
+if ! python3 "$root/scripts/sync_render_env.py"; then
+  echo "[pre-push] env sync failed — aborting push. Fix it, or bypass: git push --no-verify"
+  exit 1
+fi
