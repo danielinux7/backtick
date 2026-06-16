@@ -318,6 +318,18 @@ async def latest_session(
     sess = await hydrate_session(db, store, row.sid, user.id)
     if sess is None:
         return Response(status_code=204)
+    # The stored df is frozen at the moment the user last left, so its tail sits
+    # behind the live edge — restoring it verbatim paints a gap before the last
+    # bar that only heals via a flickery client-side reconcile. Re-pin the live
+    # window to *now* (same path create/resume uses) so the first paint already
+    # reaches the live edge. Best-effort: on a Binance hiccup fall back to the
+    # stored candles and let the client reconcile heal it.
+    if sess.is_live:
+        try:
+            warmup = max(100, min(len(sess.df), 500))
+            store.set_view(sess, sess.symbol, sess.tf, warmup=warmup)
+        except Exception:
+            pass
     return _serialize_session(sess)
 
 

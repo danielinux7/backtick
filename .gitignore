@@ -16,6 +16,9 @@ backtick.db
 backtick.db-wal
 backtick.db-shm
 
+# local SQLite backup snapshots written by the in-process scheduler
+backups/
+
 # local secrets — filled in by you, pushed to the host with scripts/sync_render_env.py.
 # NEVER commit real values; only the *.example template is tracked.
 secrets.local.json
